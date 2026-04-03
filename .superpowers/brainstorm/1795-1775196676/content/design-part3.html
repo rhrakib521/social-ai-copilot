@@ -1,0 +1,136 @@
+<h2>Design: UI Components</h2>
+<p class="subtitle">Trigger button, popover, and settings panel — how they look and behave</p>
+
+<h3 style="margin-top: 1.5rem;">1. AI Trigger Button</h3>
+<div class="mockup">
+  <div class="mockup-header">Trigger positioning — next to any editable field</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+    <div style="display: flex; gap: 2rem; align-items: flex-start;">
+      <!-- LinkedIn style -->
+      <div style="flex: 1; border: 1px solid #333; border-radius: 8px; padding: 1rem;">
+        <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">LinkedIn post input</div>
+        <div style="background: #1a1a2e; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; color: #666; position: relative; min-height: 40px;">
+          Write a comment...
+          <div style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: linear-gradient(135deg, #6c5ce7, #4a9eff); color: white; border-radius: 6px; padding: 3px 8px; font-size: 0.7rem; font-weight: 600; cursor: pointer;">AI</div>
+        </div>
+      </div>
+      <!-- X/Twitter style -->
+      <div style="flex: 1; border: 1px solid #333; border-radius: 8px; padding: 1rem;">
+        <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">X/Twitter compose</div>
+        <div style="background: #1a1a2e; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; color: #666; position: relative; min-height: 40px;">
+          What's happening?
+          <div style="position: absolute; right: 8px; bottom: 8px; background: linear-gradient(135deg, #6c5ce7, #4a9eff); color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 700; cursor: pointer;">AI</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 1rem; font-size: 0.8rem; color: #888;">
+      <strong>Behavior:</strong> Appears inside/beside detected editable fields. 28x28px, gradient pill or circle. Fades in with CSS transition. Hover: slight scale-up + glow.
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">2. AI Popover Panel</h3>
+<div class="mockup">
+  <div class="mockup-header">Popover states: Idle → Loading → Result</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+    <div style="display: flex; gap: 1.5rem; align-items: flex-start;">
+
+      <!-- State 1: Action selection -->
+      <div style="flex: 1; background: #1e1e2e; border: 1px solid #333; border-radius: 10px; padding: 1rem; min-width: 220px;">
+        <div style="font-size: 0.7rem; color: #6c5ce7; margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;">AI Copilot</div>
+        <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+          <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">✦ Generate Comment</div>
+          <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">↻ Rewrite Selection</div>
+          <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">✎ Generate Post</div>
+          <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">❝ Quote Post</div>
+        </div>
+        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <span style="font-size: 0.7rem; background: #2d2d44; padding: 2px 8px; border-radius: 10px; cursor: pointer;">Professional</span>
+          <span style="font-size: 0.7rem; background: #2d2d44; padding: 2px 8px; border-radius: 10px; cursor: pointer;">Casual</span>
+          <span style="font-size: 0.7rem; background: rgba(108,92,231,0.3); padding: 2px 8px; border-radius: 10px; cursor: pointer; border: 1px solid #6c5ce7;">Witty</span>
+          <span style="font-size: 0.7rem; background: #2d2d44; padding: 2px 8px; border-radius: 10px; cursor: pointer;">Direct</span>
+        </div>
+      </div>
+
+      <!-- State 2: Loading -->
+      <div style="flex: 1; background: #1e1e2e; border: 1px solid #333; border-radius: 10px; padding: 1rem; min-width: 220px;">
+        <div style="font-size: 0.7rem; color: #6c5ce7; margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;">Generating Comment...</div>
+        <div style="display: flex; align-items: center; justify-content: center; min-height: 80px;">
+          <div style="display: flex; gap: 6px;">
+            <div style="width: 8px; height: 8px; background: #6c5ce7; border-radius: 50%; animation: pulse 1s ease-in-out infinite;"></div>
+            <div style="width: 8px; height: 8px; background: #4a9eff; border-radius: 50%; animation: pulse 1s ease-in-out 0.2s infinite;"></div>
+            <div style="width: 8px; height: 8px; background: #6c5ce7; border-radius: 50%; animation: pulse 1s ease-in-out 0.4s infinite;"></div>
+          </div>
+        </div>
+        <div style="text-align: center; color: #888; font-size: 0.8rem;">Thinking...</div>
+      </div>
+
+      <!-- State 3: Result -->
+      <div style="flex: 1; background: #1e1e2e; border: 1px solid #333; border-radius: 10px; padding: 1rem; min-width: 220px;">
+        <div style="font-size: 0.7rem; color: #6c5ce7; margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;">Result — editable</div>
+        <div contenteditable="true" style="background: #0d0d1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; font-size: 0.85rem; line-height: 1.5; min-height: 80px; color: #ddd; outline: none;">That's a really sharp take on distributed systems. I've seen teams over-index on consistency when availability would've served users better. The CAP theorem tradeoff isn't just academic — it shows up in every outage post-mortem.</div>
+        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+          <div style="flex: 1; background: #00b894; color: white; text-align: center; border-radius: 6px; padding: 0.4rem; font-size: 0.8rem; cursor: pointer;">Insert</div>
+          <div style="flex: 1; background: #2d2d44; color: #ccc; text-align: center; border-radius: 6px; padding: 0.4rem; font-size: 0.8rem; cursor: pointer;">Regenerate</div>
+          <div style="background: #2d2d44; color: #ccc; text-align: center; border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.8rem; cursor: pointer;">✕</div>
+        </div>
+      </div>
+    </div>
+    <style>pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }</style>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">3. Settings Panel (Popup)</h3>
+<div class="mockup">
+  <div class="mockup-header">Extension popup — accessed from Chrome toolbar</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+    <div style="background: #1e1e2e; border: 1px solid #333; border-radius: 10px; padding: 1rem; max-width: 320px;">
+      <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <span style="background: linear-gradient(135deg, #6c5ce7, #4a9eff); color: white; border-radius: 4px; padding: 2px 6px; font-size: 0.7rem;">AI</span>
+        Social AI Copilot
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.7rem; color: #888; margin-bottom: 0.3rem; text-transform: uppercase;">LLM Provider</div>
+        <div style="background: #0d0d1a; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.85rem; color: #ddd;">
+          OpenAI GPT-3.5 ▾
+        </div>
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.7rem; color: #888; margin-bottom: 0.3rem; text-transform: uppercase;">API Key</div>
+        <div style="background: #0d0d1a; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.85rem; color: #666;">
+          sk-••••••••••••3f8a
+        </div>
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.7rem; color: #888; margin-bottom: 0.3rem; text-transform: uppercase;">Default Tone</div>
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+          <span style="font-size: 0.75rem; background: rgba(108,92,231,0.3); padding: 3px 10px; border-radius: 10px; border: 1px solid #6c5ce7;">Professional</span>
+          <span style="font-size: 0.75rem; background: #2d2d44; padding: 3px 10px; border-radius: 10px;">Casual</span>
+          <span style="font-size: 0.75rem; background: #2d2d44; padding: 3px 10px; border-radius: 10px;">Witty</span>
+          <span style="font-size: 0.75rem; background: #2d2d44; padding: 3px 10px; border-radius: 10px;">Direct</span>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 0;">
+        <div style="font-size: 0.7rem; color: #888; margin-bottom: 0.5rem; text-transform: uppercase;">Platforms</div>
+        <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;">
+            LinkedIn <div style="width: 32px; height: 18px; background: #00b894; border-radius: 10px; position: relative;"><div style="width: 14px; height: 14px; background: white; border-radius: 50%; position: absolute; right: 2px; top: 2px;"></div></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;">
+            Facebook <div style="width: 32px; height: 18px; background: #00b894; border-radius: 10px; position: relative;"><div style="width: 14px; height: 14px; background: white; border-radius: 50%; position: absolute; right: 2px; top: 2px;"></div></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;">
+            X / Twitter <div style="width: 32px; height: 18px; background: #00b894; border-radius: 10px; position: relative;"><div style="width: 14px; height: 14px; background: white; border-radius: 50%; position: absolute; right: 2px; top: 2px;"></div></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;">
+            Reddit <div style="width: 32px; height: 18px; background: #00b894; border-radius: 10px; position: relative;"><div style="width: 14px; height: 14px; background: white; border-radius: 50%; position: absolute; right: 2px; top: 2px;"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

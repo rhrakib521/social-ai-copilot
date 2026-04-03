@@ -1,0 +1,105 @@
+<h2>Design: Platform Detection & Prompt Engine</h2>
+<p class="subtitle">Robust detection across 4 platforms, and how prompts get built</p>
+
+<h3 style="margin-top: 1rem;">Platform Detection</h3>
+<div class="mockup">
+  <div class="mockup-header">Two-layer detection: URL first, DOM confirmation second</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-size: 0.85rem; line-height: 1.7;">
+    <div style="display: flex; gap: 1.5rem; margin-bottom: 1rem;">
+      <div style="flex: 1;">
+        <div style="color: #4a9eff; font-weight: 600; margin-bottom: 0.5rem;">Layer 1: URL matching</div>
+        <div style="background: #0d0d1a; border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.78rem;">
+          <div>linkedin.com → 'linkedin'</div>
+          <div>facebook.com → 'facebook'</div>
+          <div>twitter.com → 'x'</div>
+          <div>x.com → 'x'</div>
+          <div>reddit.com → 'reddit'</div>
+        </div>
+        <div style="color: #888; font-size: 0.78rem; margin-top: 0.5rem;">Runs once on page load. Stored for session.</div>
+      </div>
+      <div style="flex: 1;">
+        <div style="color: #6c5ce7; font-weight: 600; margin-bottom: 0.5rem;">Layer 2: DOM confirmation</div>
+        <div style="background: #0d0d1a; border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.78rem;">
+          <div>data-testid, role, aria-label</div>
+          <div>contenteditable="true"</div>
+          <div>Known structural patterns</div>
+          <div>Placeholder text heuristics</div>
+        </div>
+        <div style="color: #888; font-size: 0.78rem; margin-top: 0.5rem;">Runs via MutationObserver. Confirms fields exist.</div>
+      </div>
+    </div>
+
+    <div style="padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 6px; margin-top: 0.5rem;">
+      <strong style="color: #ddd;">Why two layers:</strong> URL tells us which platform config to load. DOM confirmation tells us where to inject. This avoids running LinkedIn selectors on Reddit or vice versa. The MutationObserver only watches for editable fields using platform-specific selector maps.
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">Platform Selector Maps</h3>
+<div class="mockup">
+  <div class="mockup-header">Each platform has a config object — no if/else chains</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-family: monospace; font-size: 0.78rem; line-height: 1.7;">
+    <div style="background: #0d0d1a; border-radius: 6px; padding: 1rem; overflow-x: auto;">
+      <div><span style="color: #6c5ce7;">const</span> platformConfigs = {</div>
+      <div style="margin-left: 1.5rem;">linkedin: {</div>
+      <div style="margin-left: 3rem;">editableFields: [</div>
+      <div style="margin-left: 4.5rem;">'[contenteditable="true"]',</div>
+      <div style="margin-left: 4.5rem;">'[aria-label*="comment" i]',</div>
+      <div style="margin-left: 4.5rem;">'[aria-label*="post" i]',</div>
+      <div style="margin-left: 3rem;">],</div>
+      <div style="margin-left: 3rem;">postContainers: [</div>
+      <div style="margin-left: 4.5rem;">'[data-urn]',</div>
+      <div style="margin-left: 4.5rem;">'div.feed-shared-update-v2',</div>
+      <div style="margin-left: 3rem;">],</div>
+      <div style="margin-left: 3rem;">authorSelector: '...span.hoverable-link-text',</div>
+      <div style="margin-left: 3rem;">personality: 'professional, insightful, not corporate'</div>
+      <div style="margin-left: 1.5rem;">},</div>
+      <div style="margin-left: 1.5rem;">x: { ... },</div>
+      <div style="margin-left: 1.5rem;">facebook: { ... },</div>
+      <div style="margin-left: 1.5rem;">reddit: { ... }</div>
+      <div>};</div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">Prompt Engine</h3>
+<div class="mockup">
+  <div class="mockup-header">How buildPrompt() assembles the final message</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-size: 0.85rem; line-height: 1.7;">
+    <div style="display: flex; gap: 1.5rem;">
+      <div style="flex: 1;">
+        <div style="color: #4a9eff; font-weight: 600; margin-bottom: 0.75rem;">System prompt (always included)</div>
+        <div style="background: #0d0d1a; border-radius: 6px; padding: 0.75rem; font-size: 0.8rem; color: #aaa; font-style: italic;">
+          "You are a human-like social media writer. Write naturally. Avoid robotic phrasing like 'Great post!' or 'I completely agree.' Add perspective, not summary."
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 1.5rem; color: #6c5ce7; font-weight: 600;">Dynamic layers merged on top:</div>
+    <div style="display: flex; gap: 1rem; margin-top: 0.75rem;">
+      <div style="flex: 1; background: rgba(108,92,231,0.08); border-radius: 6px; padding: 0.75rem;">
+        <div style="font-size: 0.75rem; color: #6c5ce7; font-weight: 600;">+ Platform personality</div>
+        <div style="font-size: 0.78rem; color: #aaa; margin-top: 0.25rem;">"You're writing for LinkedIn. Be insightful, professional, not corporate boilerplate."</div>
+      </div>
+      <div style="flex: 1; background: rgba(0,184,148,0.08); border-radius: 6px; padding: 0.75rem;">
+        <div style="font-size: 0.75rem; color: #00b894; font-weight: 600;">+ Task instruction</div>
+        <div style="font-size: 0.78rem; color: #aaa; margin-top: 0.25rem;">"Generate a comment that adds a new perspective or real-world example."</div>
+      </div>
+    </div>
+    <div style="display: flex; gap: 1rem; margin-top: 0.75rem;">
+      <div style="flex: 1; background: rgba(225,112,85,0.08); border-radius: 6px; padding: 0.75rem;">
+        <div style="font-size: 0.75rem; color: #e17055; font-weight: 600;">+ Tone modifier</div>
+        <div style="font-size: 0.78rem; color: #aaa; margin-top: 0.25rem;">"Tone: witty. Use light humor if it fits naturally."</div>
+      </div>
+      <div style="flex: 1; background: rgba(255,217,61,0.08); border-radius: 6px; padding: 0.75rem;">
+        <div style="font-size: 0.75rem; color: #ffd93d; font-weight: 600;">+ Context payload</div>
+        <div style="font-size: 0.78rem; color: #aaa; margin-top: 0.25rem;">"Post by Sarah Chen: 'Every feature request looks essential...'"</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 6px;">
+      <strong style="color: #ddd;">Output rules</strong> (appended to every prompt):
+      <span style="color: #aaa;">No hashtags unless requested. No emojis unless casual tone. Slightly imperfect human tone. Never use filler phrases like "As a..." or "In my opinion...".</span>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat \"D:/Coding/Social Media Agent/.superpowers/brainstorm/\"*/state/server-info)",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(mkdir:*)",
+      "Bash(node -c extension/manifest.json)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('extension/manifest.json','utf8'\\)\\); console.log\\('manifest.json: valid JSON'\\)\")",
+      "Bash(node -c extension/background.js)",
+      "Bash(node -c extension/content.js)",
+      "Bash(node -c extension/popup.js)",
+      "Bash(node -c utils/storage.js)",
+      "Bash(node -e ':*)"
+    ]
+  }
+}

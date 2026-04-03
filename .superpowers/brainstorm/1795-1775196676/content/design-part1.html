@@ -1,0 +1,47 @@
+<h2>Design: Data Flow</h2>
+<p class="subtitle">How a user action flows through the extension</p>
+
+<div class="mockup">
+  <div class="mockup-header">End-to-end request flow</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-family: monospace; font-size: 0.85rem; line-height: 1.8;">
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #4a9eff; color: white; padding: 4px 10px; border-radius: 4px;">1. User clicks AI button</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ content.js detects click, shows popover</div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #4a9eff; color: white; padding: 4px 10px; border-radius: 4px;">2. User picks action</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ e.g. "Generate Comment"</div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #6c5ce7; color: white; padding: 4px 10px; border-radius: 4px;">3. content.js collects context</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ contextExtractor.js grabs post text, author, selected text</div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #6c5ce7; color: white; padding: 4px 10px; border-radius: 4px;">4. promptBuilder.js builds prompt</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ merges platform personality + task + tone + context</div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #e17055; color: white; padding: 4px 10px; border-radius: 4px;">5. chrome.runtime.sendMessage → background.js</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ background.js selects provider, makes API call</div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #00b894; color: white; padding: 4px 10px; border-radius: 4px;">6. Response → popover preview</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ user can edit the generated text</div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <span style="background: #00b894; color: white; padding: 4px 10px; border-radius: 4px;">7. "Insert" button → text into input field</span>
+    </div>
+    <div style="margin-left: 2rem; margin-bottom: 0.5rem; color: #aaa;">↓ dom.js safely injects text, preserves cursor</div>
+  </div>
+</div>
+
+<div style="margin-top: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid #4a9eff;">
+  <h3 style="margin-top: 0;">Key principle</h3>
+  <p>Content scripts never make API calls directly. All LLM traffic goes through the background service worker via <code>chrome.runtime.sendMessage</code>. This keeps API keys out of page context and respects Manifest V3's security model.</p>
+</div>

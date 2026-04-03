@@ -1,0 +1,314 @@
+You are a senior full-stack engineer, browser extension architect, and product designer.
+
+You are building a production-grade Chrome extension called:
+
+SOCIAL AI COPILOT
+
+This is not a prototype. This must be clean, modular, scalable, and usable by real users.
+
+---
+
+PRODUCT VISION
+
+Build a browser-native AI copilot that lives inside social media platforms and assists users in writing high-quality content directly in the UI.
+
+Supported platforms:
+
+* LinkedIn
+* Facebook
+* X (Twitter)
+* Reddit
+
+The assistant should feel native, fast, and invisible until needed.
+
+---
+
+CORE FUNCTIONALITY
+
+When the user is on any supported platform:
+
+1. Detect:
+
+* Comment boxes
+* Post creation inputs
+* Editable fields
+
+2. Inject:
+
+* A minimal, premium UI trigger (for example a small "AI" button)
+
+3. On interaction:
+   Open a compact AI panel with options:
+
+* Generate Comment
+* Rewrite Selection
+* Generate Post
+* Quote Post (X only)
+
+4. AI Output:
+
+* Insert directly into active input field
+* Never auto-submit
+
+---
+
+TECH STACK (STRICT)
+
+* Chrome Extension (Manifest V3)
+* Vanilla JavaScript using ES Modules
+* HTML and modern CSS
+* Background Service Worker
+* Content Scripts
+* MutationObserver for dynamic DOM
+
+LLM Support Layer:
+
+* OpenAI (GPT-3.5)
+* GLM 5.1 or compatible API
+* Abstract provider system for switching between LLMs
+
+---
+
+ARCHITECTURE REQUIREMENTS
+
+/extension
+
+* manifest.json
+* background.js
+* content.js
+* styles.css
+* popup.html
+* popup.js
+
+/core
+
+* aiProvider.js
+* promptBuilder.js
+* contextExtractor.js
+* uiManager.js
+
+/utils
+
+* dom.js
+* platform.js
+* storage.js
+
+---
+
+PLATFORM DETECTION
+
+Detect and support:
+
+* linkedin.com
+* facebook.com
+* twitter.com and x.com
+* reddit.com
+
+Must be robust and not depend on fragile logic.
+
+---
+
+SMART DOM DETECTION
+
+* Use MutationObserver
+* Detect dynamic input fields
+* Avoid fragile class names
+* Prefer:
+
+  * contenteditable elements
+  * aria-labels
+  * role attributes
+
+---
+
+CONTEXT EXTRACTION ENGINE
+
+Extract:
+
+* Post text
+* Author name if available
+* Nearby comments (limited)
+* User-selected text if highlighted
+
+Keep extraction fast and lightweight.
+
+---
+
+AI PROVIDER LAYER
+
+Build a provider abstraction system:
+
+* OpenAI provider
+* GLM provider
+* Easily extendable
+
+Each provider must:
+
+* Accept a unified input format
+* Return normalized output
+
+Do not hardcode a single API.
+
+---
+
+PROMPT ENGINE
+
+System prompt:
+"You are a human-like social media writer. Avoid robotic tone. Write naturally."
+
+Dynamic inputs:
+
+* Platform
+* Task
+* Tone
+* Context
+
+Platform personalities:
+
+LinkedIn:
+
+* Insightful, professional, not corporate
+
+Facebook:
+
+* Conversational, natural
+
+X:
+
+* Short, sharp, punchy
+
+Reddit:
+
+* Honest, slightly informal, value-driven, not salesy
+
+Task types:
+
+* Comment: add perspective, not summary
+* Rewrite: improve clarity without changing meaning
+* Post: structured and engaging
+* Quote: opinionated and short
+
+Rules for output:
+
+* No robotic phrasing
+* No hashtags unless explicitly requested
+* No emojis unless casual tone
+* Slightly imperfect human tone
+
+---
+
+UI AND UX REQUIREMENTS
+
+* Minimal floating trigger button near input fields
+* Clean popup panel
+* Smooth CSS-based animations
+
+States:
+
+* Idle
+* Loading with text "Thinking..."
+* Result preview
+
+Allow editing before inserting text.
+
+Design principles:
+
+* No clutter
+* Fast interaction
+* Native feel inside each platform
+
+---
+
+AUTO INSERT ENGINE
+
+* Safely insert generated text into active input
+* Preserve cursor position
+* Do not break platform behavior
+* Use proper DOM APIs only
+
+---
+
+SETTINGS PANEL
+
+User must be able to:
+
+* Add API key(s)
+* Select LLM provider
+* Set default tone
+* Enable or disable platforms
+
+Store data securely using chrome.storage.
+
+---
+
+SECURITY REQUIREMENTS
+
+* Never expose API keys in DOM
+* Store keys using chrome.storage
+* Validate API requests
+* Prevent XSS risks
+* Do not inject unsafe scripts
+
+---
+
+PERFORMANCE REQUIREMENTS
+
+* Debounce DOM scanning
+* Avoid unnecessary re-renders
+* Lazy-load logic where possible
+* Keep extension lightweight
+
+---
+
+BONUS FEATURES
+
+* Keyboard shortcut (Ctrl or Cmd + Shift + A)
+* Tone switch inside popup
+* Save generated history
+* Reuse previous outputs
+
+---
+
+OUTPUT REQUIREMENTS
+
+Generate:
+
+* Full working codebase
+* All files with proper structure
+* Clean, readable, commented code
+* No placeholders or pseudo-code
+* Ready to load as Chrome extension
+
+---
+
+SETUP INSTRUCTIONS
+
+Include:
+
+* How to install extension locally
+* How to add API key
+* How to test on LinkedIn, Facebook, X, and Reddit
+
+---
+
+STRICT RULES
+
+* Do NOT auto-post content
+* Do NOT use fragile selectors
+* Do NOT overcomplicate UI
+* Do NOT skip modular architecture
+
+---
+
+FINAL GOAL
+
+Build a real, usable AI browser copilot that:
+
+* Works reliably on LinkedIn, Facebook, X, and Reddit
+* Generates high-quality human-like content
+* Feels like a premium product
+* Can evolve into a SaaS platform
+
+---
+
+Start building now.

@@ -1,0 +1,48 @@
+<h2>Design: File Structure & Modules</h2>
+<p class="subtitle">Every file and what it owns</p>
+
+<div class="mockup">
+  <div class="mockup-header">Directory Layout</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-family: monospace; font-size: 0.82rem; line-height: 1.9;">
+    <div style="color: #ffd93d;">extension/</div>
+    <div style="margin-left: 1.5rem;">├── manifest.json <span style="color: #888;">— MV3 config, permissions, content script regs</span></div>
+    <div style="margin-left: 1.5rem;">├── background.js <span style="color: #888;">— Service worker: API routing, provider dispatch, settings</span></div>
+    <div style="margin-left: 1.5rem;">├── content.js <span style="color: #888;">— Entry point: DOM scanning, observer, popover lifecycle</span></div>
+    <div style="margin-left: 1.5rem;">├── styles.css <span style="color: #888;">— All injected UI styles (trigger, popover, animations)</span></div>
+    <div style="margin-left: 1.5rem;">├── popup.html <span style="color: #888;">— Extension popup: settings panel UI</span></div>
+    <div style="margin-left: 1.5rem;">└── popup.js <span style="color: #888;">— Settings logic: API keys, provider, tone, platform toggles</span></div>
+    <br>
+    <div style="color: #ffd93d;">core/</div>
+    <div style="margin-left: 1.5rem;">├── aiProvider.js <span style="color: #888;">— Provider registry + unified call interface</span></div>
+    <div style="margin-left: 1.5rem;">│   <span style="color: #6c5ce7;">exports: registerProvider(), callProvider(providerId, messages, options)</span></div>
+    <div style="margin-left: 1.5rem;">├── providers/</div>
+    <div style="margin-left: 3rem;">├── openai.js <span style="color: #888;">— OpenAI/GPT-3.5 adapter</span></div>
+    <div style="margin-left: 3rem;">├── glm.js <span style="color: #888;">— GLM 5.1 adapter</span></div>
+    <div style="margin-left: 3rem;">└── backendProxy.js <span style="color: #888;">— Your backend service adapter</span></div>
+    <div style="margin-left: 1.5rem;">├── promptBuilder.js <span style="color: #888;">— Builds LLM prompts from context</span></div>
+    <div style="margin-left: 1.5rem;">│   <span style="color: #6c5ce7;">exports: buildPrompt({ platform, task, tone, context })</span></div>
+    <div style="margin-left: 1.5rem;">├── contextExtractor.js <span style="color: #888;">— Pulls post/author/comment context from DOM</span></div>
+    <div style="margin-left: 1.5rem;">│   <span style="color: #6c5ce7;">exports: extractContext(activeElement) → { postText, author, nearbyComments, selectedText }</span></div>
+    <div style="margin-left: 1.5rem;">└── uiManager.js <span style="color: #888;">— Creates/manages trigger button + popover DOM</span></div>
+    <div style="margin-left: 1.5rem;">    <span style="color: #6c5ce7;">exports: createTrigger(field), showPopover(trigger, actions), hidePopover(), insertText(field, text)</span></div>
+    <br>
+    <div style="color: #ffd93d;">utils/</div>
+    <div style="margin-left: 1.5rem;">├── dom.js <span style="color: #888;">— Safe DOM helpers: insert, cursor, selection</span></div>
+    <div style="margin-left: 1.5rem;">├── platform.js <span style="color: #888;">— Platform detection + platform-specific selectors</span></div>
+    <div style="margin-left: 1.5rem;">│   <span style="color: #6c5ce7;">exports: detectPlatform(url) → 'linkedin' | 'facebook' | 'x' | 'reddit' | null</span></div>
+    <div style="margin-left: 1.5rem;">│   <span style="color: #6c5ce7;">exports: getFieldSelectors(platform) → { editableFields, postContainers, commentBoxes }</span></div>
+    <div style="margin-left: 1.5rem;">└── storage.js <span style="color: #888;">— chrome.storage wrapper with defaults</span></div>
+    <div style="margin-left: 1.5rem;">    <span style="color: #6c5ce7;">exports: getSettings(), saveSettings(partial), getHistory(), saveHistory(entry)</span></div>
+  </div>
+</div>
+
+<div style="margin-top: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid #6c5ce7;">
+  <h3 style="margin-top: 0;">Module boundary rules</h3>
+  <ul style="margin-bottom: 0;">
+    <li><strong>content.js</strong> imports from <code>core/</code> and <code>utils/</code> — it's the orchestrator</li>
+    <li><strong>background.js</strong> imports from <code>core/aiProvider.js</code> only — it's the API gateway</li>
+    <li><strong>core/</strong> modules never import each other — they're pure functions</li>
+    <li><strong>utils/</strong> are stateless helpers used by everyone</li>
+    <li><strong>popup.js</strong> only talks to <code>utils/storage.js</code> and <code>background.js</code> (via messages)</li>
+  </ul>
+</div>

@@ -1,0 +1,64 @@
+<h2>Architecture Approaches</h2>
+<p class="subtitle">Three ways to structure the extension internals. Pick the one that fits your vision.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Flat Module Architecture (Recommended)</h3>
+      <p>Each file is a self-contained ES module with a clear single responsibility. content.js orchestrates DOM work, background.js handles API calls and state, core/ modules are imported as needed. No classes, no inheritance — just functions and exports.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Simple to understand — each file does one thing</li>
+          <li>Easy to debug — call stacks are shallow</li>
+          <li>Matches the spec's file structure directly</li>
+          <li>Fastest to build</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Can grow unwieldy if features balloon</li>
+          <li>Shared state management is ad-hoc</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Event-Driven Architecture</h3>
+      <p>A central event bus connects all modules. Content scripts fire events like <code>field-detected</code>, <code>ai-requested</code>, <code>text-generated</code>. Background worker listens and dispatches. Modules communicate only through events — no direct imports between content and background.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Very decoupled — modules don't know about each other</li>
+          <li>Easy to add new platforms or providers</li>
+          <li>Natural fit for Chrome's message-passing model</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Harder to trace execution flow</li>
+          <li>Event naming becomes an implicit API</li>
+          <li>More boilerplate for simple operations</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Class-Based OOP</h3>
+      <p>Each subsystem is a class: <code>AIProviderManager</code>, <code>PlatformDetector</code>, <code>UIManager</code>, etc. A central <code>CopilotApp</code> class wires them together. Inheritance for providers (base <code>AIProvider</code> → <code>OpenAIProvider</code>).</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Clear encapsulation</li>
+          <li>Type-safe patterns (if adding TypeScript later)</li>
+          <li>Familiar to OOP-background developers</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Overkill for an extension this size</li>
+          <li><code>this</code> binding issues in content scripts</li>
+          <li>Harder to tree-shake / lazy-load</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>

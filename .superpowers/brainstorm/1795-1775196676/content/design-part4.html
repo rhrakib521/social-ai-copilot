@@ -1,0 +1,101 @@
+<h2>Design: Post Selection & Context</h2>
+<p class="subtitle">How the extension knows which post you're acting on</p>
+
+<h3 style="margin-top: 1rem;">Primary method: Proximity-based auto-detection</h3>
+<div class="mockup">
+  <div class="mockup-header">Auto-detect: the post closest to your input field</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+    <div style="max-width: 500px; margin: 0 auto;">
+
+      <!-- A post in the feed -->
+      <div style="border: 1px solid #333; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; background: rgba(74,158,255,0.05); border-left: 3px solid #4a9eff;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <div style="width: 28px; height: 28px; background: #2d2d44; border-radius: 50%;"></div>
+          <div>
+            <div style="font-size: 0.8rem; font-weight: 600;">Sarah Chen</div>
+            <div style="font-size: 0.65rem; color: #888;">VP Engineering • 2h</div>
+          </div>
+        </div>
+        <div style="font-size: 0.85rem; line-height: 1.5; color: #ccc;">
+          The hardest part of scaling isn't the architecture — it's deciding what NOT to build. Every feature request looks essential until you map it against actual user behavior data.
+        </div>
+        <div style="font-size: 0.7rem; color: #4a9eff; margin-top: 0.5rem;">
+          ← auto-detected as "active post" (closest ancestor to your input)
+        </div>
+      </div>
+
+      <!-- Reply input with AI button -->
+      <div style="position: relative; margin-left: 2rem;">
+        <div style="background: #1a1a2e; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; padding-right: 3rem; color: #666; min-height: 40px; font-size: 0.85rem;">
+          Write a reply...
+        </div>
+        <div style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: linear-gradient(135deg, #6c5ce7, #4a9eff); color: white; border-radius: 6px; padding: 3px 8px; font-size: 0.7rem; font-weight: 600; cursor: pointer;">AI</div>
+      </div>
+
+    </div>
+    <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 0.8rem; color: #aaa;">
+      <strong style="color: #ddd;">How it works:</strong> When the AI button is clicked, contextExtractor.js traverses up the DOM from the input field to find the nearest post container. Each platform has its own post container selectors — LinkedIn uses specific article/section wrappers, X uses tweet-specific data attributes, Reddit uses post/comment thing containers.
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">Secondary method: Highlight-to-select</h3>
+<div class="mockup">
+  <div class="mockup-header">User highlights specific text to use as context</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+    <div style="max-width: 500px; margin: 0 auto;">
+      <div style="border: 1px solid #333; border-radius: 8px; padding: 1rem; background: rgba(108,92,231,0.05);">
+        <div style="font-size: 0.85rem; line-height: 1.6; color: #ccc;">
+          The hardest part of scaling isn't the architecture — it's deciding what NOT to build.
+          <span style="background: rgba(108,92,231,0.3); border-bottom: 2px solid #6c5ce7; padding: 1px 2px;">Every feature request looks essential until you map it against actual user behavior data.</span>
+        </div>
+        <div style="font-size: 0.7rem; color: #6c5ce7; margin-top: 0.5rem;">
+          ← user highlighted this text → fed directly as context
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 0.8rem; color: #aaa;">
+      <strong style="color: #ddd;">How it works:</strong> If the user has text selected on the page when they click the AI button, that selection becomes the primary context. This overrides or supplements the auto-detected post. Useful for replying to a specific paragraph or quoting a fragment.
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">Popover: Context preview strip</h3>
+<div class="mockup">
+  <div class="mockup-header">The popover shows what context it's working with</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+    <div style="max-width: 260px; background: #1e1e2e; border: 1px solid #333; border-radius: 10px; padding: 1rem;">
+      <div style="font-size: 0.7rem; color: #6c5ce7; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.75rem;">AI Copilot</div>
+
+      <!-- Context preview -->
+      <div style="background: #0d0d1a; border: 1px solid #2d2d44; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem;">
+        <div style="font-size: 0.65rem; color: #888; margin-bottom: 0.25rem; text-transform: uppercase;">Replying to</div>
+        <div style="font-size: 0.78rem; color: #aaa; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+          Sarah Chen: "Every feature request looks essential until you map it against actual user behavior data..."
+        </div>
+        <div style="font-size: 0.6rem; color: #4a9eff; margin-top: 0.25rem; cursor: pointer;">✎ Change selection</div>
+      </div>
+
+      <!-- Actions -->
+      <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+        <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">✦ Generate Comment</div>
+        <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">↻ Rewrite Selection</div>
+        <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">✎ Generate Post</div>
+        <div style="background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;">❝ Quote Post</div>
+      </div>
+
+      <!-- Tone -->
+      <div style="margin-top: 0.75rem; display: flex; gap: 0.4rem; flex-wrap: wrap;">
+        <span style="font-size: 0.7rem; background: rgba(108,92,231,0.3); padding: 2px 8px; border-radius: 10px; border: 1px solid #6c5ce7;">Professional</span>
+        <span style="font-size: 0.7rem; background: #2d2d44; padding: 2px 8px; border-radius: 10px;">Casual</span>
+        <span style="font-size: 0.7rem; background: #2d2d44; padding: 2px 8px; border-radius: 10px;">Witty</span>
+        <span style="font-size: 0.7rem; background: #2d2d44; padding: 2px 8px; border-radius: 10px;">Direct</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid #e17055;">
+  <h3 style="margin-top: 0;">"Change selection" flow</h3>
+  <p style="margin-bottom: 0;">Clicking "Change selection" collapses the popover into a <strong>picker mode</strong>: the user clicks any post or highlights any text on the page to set it as context. The popover re-opens with the new context preview. This handles edge cases like feeds with many posts stacked together.</p>
+</div>

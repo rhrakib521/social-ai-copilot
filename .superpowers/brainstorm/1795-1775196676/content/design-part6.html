@@ -1,0 +1,116 @@
+<h2>Design: Dual API Mode, Security & Bonus Features</h2>
+<p class="subtitle">The final pieces — how both auth modes work and what ships in v1</p>
+
+<h3 style="margin-top: 1rem;">Dual API Mode</h3>
+<div class="mockup">
+  <div class="mockup-header">Provider routing in background.js</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-size: 0.85rem; line-height: 1.7;">
+    <div style="display: flex; gap: 1.5rem;">
+      <div style="flex: 1; background: rgba(74,158,255,0.06); border: 1px solid rgba(74,158,255,0.2); border-radius: 8px; padding: 1rem;">
+        <div style="color: #4a9eff; font-weight: 600; margin-bottom: 0.5rem;">Mode A: User's own key</div>
+        <div style="font-size: 0.8rem; color: #aaa;">
+          <div>1. User enters API key in settings</div>
+          <div>2. Key stored in <code>chrome.storage.local</code></div>
+          <div>3. background.js reads key, calls LLM directly</div>
+          <div>4. Request: <code>fetch('https://api.openai.com/v1/...')</code></div>
+        </div>
+        <div style="margin-top: 0.75rem; font-size: 0.78rem; color: #888;">
+          Works for: OpenAI, GLM (any provider with a key)
+        </div>
+      </div>
+      <div style="flex: 1; background: rgba(108,92,231,0.06); border: 1px solid rgba(108,92,231,0.2); border-radius: 8px; padding: 1rem;">
+        <div style="color: #6c5ce7; font-weight: 600; margin-bottom: 0.5rem;">Mode B: Backend proxy</div>
+        <div style="font-size: 0.8rem; color: #aaa;">
+          <div>1. User signs up / logs in via popup</div>
+          <div>2. Auth token stored in <code>chrome.storage.local</code></div>
+          <div>3. background.js calls your API with token</div>
+          <div>4. Your server proxies to LLM, returns result</div>
+        </div>
+        <div style="margin-top: 0.75rem; font-size: 0.78rem; color: #888;">
+          Enables: usage tracking, rate limits, billing, SaaS
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 6px;">
+      <strong style="color: #ddd;">Routing logic:</strong> Settings include an <code>authMode</code> field: <code>'user_key'</code> or <code>'backend'</code>. background.js checks this on every request and dispatches to the appropriate provider adapter. If <code>'user_key'</code> but no key is saved, shows a notification to open settings.
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">Security Model</h3>
+<div class="mockup">
+  <div class="mockup-header">How secrets and data are handled</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-size: 0.85rem; line-height: 1.8;">
+    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+
+      <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+        <div style="min-width: 24px; height: 24px; background: #00b894; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;">✓</div>
+        <div>
+          <strong style="color: #ddd;">API keys never touch the DOM</strong><br>
+          <span style="color: #aaa;">Stored in <code>chrome.storage.local</code>, read only by background.js. Content scripts never see them. Popup masks the key field.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+        <div style="min-width: 24px; height: 24px; background: #00b894; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;">✓</div>
+        <div>
+          <strong style="color: #ddd;">All API calls from background service worker only</strong><br>
+          <span style="color: #aaa;">Content scripts send messages via <code>chrome.runtime.sendMessage</code>. Background worker makes the actual fetch. Keys never exist in page context.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+        <div style="min-width: 24px; height: 24px; background: #00b894; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;">✓</div>
+        <div>
+          <strong style="color: #ddd;">XSS prevention</strong><br>
+          <span style="color: #aaa;">All injected UI uses <code>document.createElement()</code> — no <code>innerHTML</code> with user data. Generated text inserted via DOM text nodes.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+        <div style="min-width: 24px; height: 24px; background: #00b894; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;">✓</div>
+        <div>
+          <strong style="color: #ddd;">Minimal permissions</strong><br>
+          <span style="color: #aaa;">Manifest requests only: <code>storage</code>, <code>activeTab</code>, host permissions for the 4 platforms. No broad <code>&lt;all_urls&gt;</code> access.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+        <div style="min-width: 24px; height: 24px; background: #00b894; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;">✓</div>
+        <div>
+          <strong style="color: #ddd;">No auto-submit</strong><br>
+          <span style="color: #aaa;">Extension only inserts text into fields. Never triggers form submission, clicks buttons, or takes any action on behalf of the user.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 2rem;">Bonus Features (v1)</h3>
+<div class="mockup">
+  <div class="mockup-header">Ships alongside core features</div>
+  <div class="mockup-body" style="padding: 1.5rem; font-size: 0.85rem; line-height: 1.7;">
+    <div style="display: flex; gap: 1.5rem;">
+      <div style="flex: 1; background: rgba(255,217,61,0.06); border: 1px solid rgba(255,217,61,0.15); border-radius: 8px; padding: 0.75rem;">
+        <div style="color: #ffd93d; font-weight: 600; margin-bottom: 0.3rem;">⌨ Keyboard shortcut</div>
+        <div style="font-size: 0.8rem; color: #aaa;">
+          <code>Ctrl/Cmd + Shift + A</code> opens the popover on the nearest editable field. Registered via <code>chrome.commands</code> in manifest. Works without clicking the AI button.
+        </div>
+      </div>
+      <div style="flex: 1; background: rgba(255,217,61,0.06); border: 1px solid rgba(255,217,61,0.15); border-radius: 8px; padding: 0.75rem;">
+        <div style="color: #ffd93d; font-weight: 600; margin-bottom: 0.3rem;">📋 Generation history</div>
+        <div style="font-size: 0.8rem; color: #aaa;">
+          Each generated output saved to <code>chrome.storage.local</code> with timestamp, platform, and action type. Accessible from popup. "Reuse" inserts a previous output. Capped at 100 entries, FIFO.
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 1rem; background: rgba(255,217,61,0.06); border: 1px solid rgba(255,217,61,0.15); border-radius: 8px; padding: 0.75rem;">
+      <div style="color: #ffd93d; font-weight: 600; margin-bottom: 0.3rem;">🎨 Tone switch in popover</div>
+      <div style="font-size: 0.8rem; color: #aaa;">
+        Tone chips are already in the popover design. Clicking a different tone re-runs the generation with the new tone applied. No page reload needed.
+      </div>
+    </div>
+  </div>
+</div>
