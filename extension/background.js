@@ -123,7 +123,7 @@ async function callGLM(messages, options) {
 
 async function callGemini(messages, options) {
   var apiKey = options.apiKey;
-  var model = options.geminiModel || 'gemini-2.0-flash';
+  var model = options.geminiModel || 'gemini-2.5-flash';
   var maxTokens = options.maxTokens || 300;
 
   // Use OpenAI-compatible endpoint for simpler integration
@@ -335,7 +335,7 @@ var DEFAULT_SETTINGS = {
   provider: 'openai',
   authMode: 'user_key',
   apiKey: '',
-  openaiModel: 'gpt-4o-mini',
+  openaiModel: 'gpt-4.1-mini',
   glmModel: 'glm-4-flash',
   geminiModel: 'gemini-2.5-flash',
   deepseekModel: 'deepseek-chat',

@@ -133,7 +133,7 @@
     var data = {
       provider: providerSelect.value,
       apiKey: apiKeyInput.value,
-      openaiModel: getModelValue(openaiModelSelect, openaiModelCustom, 'gpt-4o-mini'),
+      openaiModel: getModelValue(openaiModelSelect, openaiModelCustom, 'gpt-4.1-mini'),
       glmModel: getModelValue(glmModelSelect, glmModelCustom, 'glm-4-flash'),
       geminiModel: getModelValue(geminiModelSelect, geminiModelCustom, 'gemini-2.5-flash'),
       deepseekModel: getModelValue(deepseekModelSelect, deepseekModelCustom, 'deepseek-chat'),
