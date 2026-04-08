@@ -2,11 +2,60 @@
 // Service worker for Social AI Copilot.
 // Handles AI generation requests, provider dispatch, history, and keyboard shortcuts.
 
+// ── GLM JWT Token Generation ──
+// Zhipu AI API keys in {id}.{secret} format require JWT generation.
+
+function base64urlEncode(str) {
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function arrayBufferToBase64(buffer) {
+  var bytes = new Uint8Array(buffer);
+  var binary = '';
+  for (var i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function generateGLMToken(apiKey) {
+  var parts = apiKey.split('.');
+  if (parts.length !== 2) {
+    // Not in id.secret format — use as-is (newer direct keys)
+    return apiKey;
+  }
+
+  var id = parts[0];
+  var secret = parts[1];
+  var now = Math.floor(Date.now() / 1000);
+
+  var header = base64urlEncode(JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' }));
+  var payload = base64urlEncode(JSON.stringify({
+    api_key: id,
+    exp: now + 3600,
+    timestamp: now
+  }));
+
+  var message = header + '.' + payload;
+  var encoder = new TextEncoder();
+
+  var cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  var signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(message));
+  return message + '.' + arrayBufferToBase64(signature);
+}
+
 // ── Provider implementations (inlined for MV3 service worker) ──
 
 async function callOpenAI(messages, options) {
   var apiKey = options.apiKey;
-  var model = options.model || 'gpt-4o-mini';
+  var model = options.openaiModel || 'gpt-4o-mini';
   var maxTokens = options.maxTokens || 300;
 
   var response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -37,14 +86,20 @@ async function callOpenAI(messages, options) {
 
 async function callGLM(messages, options) {
   var apiKey = options.apiKey;
-  var model = options.model || 'glm-4-flash';
+  var model = options.glmModel || 'glm-4-flash';
   var maxTokens = options.maxTokens || 300;
+
+  // Generate JWT token for id.secret format keys, or use key directly
+  var token = await generateGLMToken(apiKey);
+  // Zhipu API: JWT tokens from id.secret format are sent without "Bearer " prefix.
+  // Direct API keys (no dots) use "Bearer " prefix.
+  var authHeader = apiKey.includes('.') ? token : 'Bearer ' + token;
 
   var response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + apiKey
+      'Authorization': authHeader
     },
     body: JSON.stringify({
       model: model,
@@ -62,6 +117,100 @@ async function callGLM(messages, options) {
   var data = await response.json();
   if (!data.choices || data.choices.length === 0) {
     throw new Error('GLM API returned no choices.');
+  }
+  return data.choices[0].message.content.trim();
+}
+
+async function callGemini(messages, options) {
+  var apiKey = options.apiKey;
+  var model = options.geminiModel || 'gemini-2.0-flash';
+  var maxTokens = options.maxTokens || 300;
+
+  // Use OpenAI-compatible endpoint for simpler integration
+  var response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: messages,
+      max_tokens: maxTokens,
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    var errorBody = await response.text();
+    throw new Error('Gemini API error (' + response.status + '): ' + errorBody);
+  }
+
+  var data = await response.json();
+  if (!data.choices || data.choices.length === 0) {
+    throw new Error('Gemini API returned no choices.');
+  }
+  return data.choices[0].message.content.trim();
+}
+
+async function callDeepSeek(messages, options) {
+  var apiKey = options.apiKey;
+  var model = options.deepseekModel || 'deepseek-chat';
+  var maxTokens = options.maxTokens || 300;
+
+  var response = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: messages,
+      max_tokens: maxTokens,
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    var errorBody = await response.text();
+    throw new Error('DeepSeek API error (' + response.status + '): ' + errorBody);
+  }
+
+  var data = await response.json();
+  if (!data.choices || data.choices.length === 0) {
+    throw new Error('DeepSeek API returned no choices.');
+  }
+  return data.choices[0].message.content.trim();
+}
+
+async function callQwen(messages, options) {
+  var apiKey = options.apiKey;
+  var model = options.qwenModel || 'qwen-plus';
+  var maxTokens = options.maxTokens || 300;
+
+  var response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: messages,
+      max_tokens: maxTokens,
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    var errorBody = await response.text();
+    throw new Error('Qwen API error (' + response.status + '): ' + errorBody);
+  }
+
+  var data = await response.json();
+  if (!data.choices || data.choices.length === 0) {
+    throw new Error('Qwen API returned no choices.');
   }
   return data.choices[0].message.content.trim();
 }
@@ -186,6 +335,11 @@ var DEFAULT_SETTINGS = {
   provider: 'openai',
   authMode: 'user_key',
   apiKey: '',
+  openaiModel: 'gpt-4o-mini',
+  glmModel: 'glm-4-flash',
+  geminiModel: 'gemini-2.5-flash',
+  deepseekModel: 'deepseek-chat',
+  qwenModel: 'qwen-plus',
   backendToken: '',
   defaultTone: 'professional',
   platforms: { linkedin: true, facebook: true, x: true, reddit: true }
@@ -240,6 +394,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         var providerOptions = {
           apiKey: settings.apiKey,
+          openaiModel: settings.openaiModel,
+          glmModel: settings.glmModel,
+          geminiModel: settings.geminiModel,
+          deepseekModel: settings.deepseekModel,
+          qwenModel: settings.qwenModel,
           backendToken: settings.backendToken,
           maxTokens: promptResult.maxTokens
         };
@@ -252,6 +411,15 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         } else if (settings.provider === 'glm') {
           if (!settings.apiKey) throw new Error('GLM API key not configured. Open the extension settings to add it.');
           text = await callGLM(promptResult.messages, providerOptions);
+        } else if (settings.provider === 'gemini') {
+          if (!settings.apiKey) throw new Error('Gemini API key not configured. Open the extension settings to add it.');
+          text = await callGemini(promptResult.messages, providerOptions);
+        } else if (settings.provider === 'deepseek') {
+          if (!settings.apiKey) throw new Error('DeepSeek API key not configured. Open the extension settings to add it.');
+          text = await callDeepSeek(promptResult.messages, providerOptions);
+        } else if (settings.provider === 'qwen') {
+          if (!settings.apiKey) throw new Error('Qwen API key not configured. Open the extension settings to add it.');
+          text = await callQwen(promptResult.messages, providerOptions);
         } else if (settings.provider === 'backend') {
           if (!settings.backendToken) throw new Error('Backend token not configured. Open the extension settings to add it.');
           text = await callBackendProxy(promptResult.messages, providerOptions);
