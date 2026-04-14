@@ -26,6 +26,8 @@
   var backendTokenGroup = document.getElementById('backendTokenGroup');
   var backendTokenInput = document.getElementById('backendToken');
   var defaultToneSelect = document.getElementById('defaultTone');
+  var personalizationInput = document.getElementById('personalization');
+  var charCountEl = document.getElementById('charCount');
   var historyList = document.getElementById('historyList');
   var clearHistoryBtn = document.getElementById('clearHistoryBtn');
   var saveBtn = document.getElementById('saveBtn');
@@ -103,6 +105,11 @@
 
   providerSelect.addEventListener('change', updateProviderUI);
 
+  // ── Char counter for personalization ──
+  personalizationInput.addEventListener('input', function () {
+    charCountEl.textContent = personalizationInput.value.length;
+  });
+
   // ── Load settings ──
   function loadSettings() {
     chrome.runtime.sendMessage({ type: 'getSettings' }, function (settings) {
@@ -110,7 +117,9 @@
       providerSelect.value = settings.provider || 'openai';
       apiKeyInput.value = settings.apiKey || '';
       backendTokenInput.value = settings.backendToken || '';
-      defaultToneSelect.value = settings.defaultTone || 'professional';
+      defaultToneSelect.value = settings.defaultTone || 'casual';
+      personalizationInput.value = settings.personalization || '';
+      charCountEl.textContent = (settings.personalization || '').length;
 
       if (settings.openaiModel) setModelUI(openaiModelSelect, openaiModelCustom, settings.openaiModel);
       if (settings.glmModel) setModelUI(glmModelSelect, glmModelCustom, settings.glmModel);
@@ -134,11 +143,12 @@
       provider: providerSelect.value,
       apiKey: apiKeyInput.value,
       openaiModel: getModelValue(openaiModelSelect, openaiModelCustom, 'gpt-4.1-mini'),
-      glmModel: getModelValue(glmModelSelect, glmModelCustom, 'glm-4-flash'),
+      glmModel: getModelValue(glmModelSelect, glmModelCustom, 'glm-5.1'),
       geminiModel: getModelValue(geminiModelSelect, geminiModelCustom, 'gemini-2.5-flash'),
       deepseekModel: getModelValue(deepseekModelSelect, deepseekModelCustom, 'deepseek-chat'),
       qwenModel: getModelValue(qwenModelSelect, qwenModelCustom, 'qwen-plus'),
       backendToken: backendTokenInput.value,
+      personalization: personalizationInput.value.trim(),
       defaultTone: defaultToneSelect.value,
       platforms: {
         linkedin: document.getElementById('platform-linkedin').checked,

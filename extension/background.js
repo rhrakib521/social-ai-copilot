@@ -27,13 +27,14 @@ async function generateGLMToken(apiKey) {
 
   var id = parts[0];
   var secret = parts[1];
-  var now = Math.floor(Date.now() / 1000);
+  // SDK uses millisecond timestamps: int(round(time.time() * 1000))
+  var nowMs = Date.now();
 
   var header = base64urlEncode(JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' }));
   var payload = base64urlEncode(JSON.stringify({
     api_key: id,
-    exp: now + 3600,
-    timestamp: now
+    exp: nowMs + 210000,   // 210 seconds (3.5 min) in milliseconds
+    timestamp: nowMs
   }));
 
   var message = header + '.' + payload;
@@ -84,41 +85,59 @@ async function callOpenAI(messages, options) {
   return data.choices[0].message.content.trim();
 }
 
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
 async function callGLM(messages, options) {
   var apiKey = options.apiKey;
-  var model = options.glmModel || 'glm-4-flash';
+  var model = options.glmModel || 'glm-5.1';
   var maxTokens = options.maxTokens || 300;
 
-  // Generate JWT token for id.secret format keys, or use key directly
+  // Generate JWT token for id.secret format keys, or use key directly.
+  // The API accepts BOTH raw API key and JWT token as Bearer tokens.
   var token = await generateGLMToken(apiKey);
-  // Zhipu API: JWT tokens from id.secret format are sent without "Bearer " prefix.
-  // Direct API keys (no dots) use "Bearer " prefix.
-  var authHeader = apiKey.includes('.') ? token : 'Bearer ' + token;
+  var authHeader = 'Bearer ' + token;
 
-  var response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': authHeader
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: messages,
-      max_tokens: maxTokens,
-      temperature: 0.7
-    })
-  });
+  var maxRetries = 3;
+  for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    var response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': authHeader,
+        'x-source-channel': 'chrome-extension'
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        max_tokens: maxTokens,
+        temperature: 0.7
+      })
+    });
 
-  if (!response.ok) {
-    var errorBody = await response.text();
-    throw new Error('GLM API error (' + response.status + '): ' + errorBody);
+    if (response.status === 429 && attempt < maxRetries) {
+      // Rate limited — wait with exponential backoff (2s, 4s, 8s)
+      var waitMs = 2000 * Math.pow(2, attempt);
+      await sleep(waitMs);
+      // Regenerate token since it may have expired during wait
+      token = await generateGLMToken(apiKey);
+      authHeader = 'Bearer ' + token;
+      continue;
+    }
+
+    if (!response.ok) {
+      var errorBody = await response.text();
+      throw new Error('GLM API error (' + response.status + '): ' + errorBody);
+    }
+
+    var data = await response.json();
+    if (!data.choices || data.choices.length === 0) {
+      throw new Error('GLM API returned no choices.');
+    }
+    return data.choices[0].message.content.trim();
   }
-
-  var data = await response.json();
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error('GLM API returned no choices.');
-  }
-  return data.choices[0].message.content.trim();
+  throw new Error('GLM API rate limited after ' + maxRetries + ' retries. Please try again.');
 }
 
 async function callGemini(messages, options) {
@@ -250,47 +269,53 @@ async function callBackendProxy(messages, options) {
 // ── Prompt building ──
 
 var TONE_GUIDES = {
-  professional: 'Use a professional, polished tone. Be clear, concise, and authoritative.',
-  casual: 'Use a relaxed, conversational tone. Be friendly and approachable.',
-  witty: 'Use a witty, clever tone. Add humor and personality while staying on topic.',
-  direct: 'Use a direct, no-nonsense tone. Be straightforward and to the point.'
+  casual: 'Write casually — friendly, relaxed, like talking to a friend.',
+  funny: 'Write with humor — be witty and entertaining while staying on topic.',
+  informative: 'Write to inform — clear, educational, with useful takeaways.'
 };
 
 var TASK_INSTRUCTIONS = {
   reply: 'Write a reply to the post or comment provided in the context below.',
   comment: 'Write a comment on the post provided in the context below. Add a new perspective or real-world example, do not just summarize.',
+  quick_reply: 'Write a short, natural 2-3 line comment on the post. Keep it casual and genuine — like a real person would write. No fancy language.',
   post: 'Write a new original post based on the topic or draft provided in the context. Make it structured and engaging.',
   rewrite: 'Rewrite and improve the text provided in the context below. Improve clarity without changing the core meaning.',
+  hook: 'Write an attention-grabbing hook or opening line for a post on the topic provided. Make it stop-the-scroll worthy.',
+  shorten: 'Make the text shorter and more concise while keeping the core message intact.',
   expand: 'Expand on the ideas in the text provided in the context below. Add more detail and depth.',
+  grammar: 'Fix any grammar, spelling, punctuation, or phrasing errors in the text. Return only the corrected version.',
   summarize: 'Summarize the post or text provided in the context below concisely.'
 };
 
-function buildPrompt(platform, task, tone, context, personality) {
-  var toneGuide = TONE_GUIDES[tone] || TONE_GUIDES.professional;
+function buildPrompt(platform, task, tone, context, personality, personalization) {
+  var toneGuide = TONE_GUIDES[tone] || TONE_GUIDES.casual;
   var taskInstruction = TASK_INSTRUCTIONS[task] || TASK_INSTRUCTIONS.reply;
 
   var systemLines = [
-    'You are Social AI Copilot, an intelligent writing assistant embedded in a social media platform.',
+    'You are Social AI Copilot, a writing assistant for social media.',
     '',
     'Platform: ' + platform,
     personality,
     '',
     'Task: ' + taskInstruction,
     '',
-    'Tone: ' + toneGuide,
+    'Tone: ' + toneGuide
+  ];
+
+  // Inject personalization as a single concise line (token-efficient)
+  if (personalization && personalization.trim()) {
+    systemLines.push('User style: Mimic this writing style — ' + personalization.trim());
+  }
+
+  systemLines.push(
     '',
     'Rules:',
-    '- Write ONLY the response text. Do not add prefixes like "Response:" or "Here is your reply:".',
-    '- Do not include any meta-commentary about the task.',
+    '- Output ONLY the response text. No prefixes or meta-commentary.',
     '- Match the language of the input context.',
-    '- Keep the response appropriate for the platform and its typical content length.',
-    '- If context includes a specific question, answer it directly.',
-    '- Do not make up facts or quotes that are not in the provided context.',
-    '- No hashtags unless explicitly requested.',
-    '- No emojis unless the tone is casual.',
-    '- Write with a slightly imperfect human tone. Avoid robotic phrasing.',
-    '- Never use filler phrases like "As a...", "In my opinion...", or "Great post!"'
-  ];
+    '- Do not make up facts or quotes not in the context.',
+    '- No hashtags unless requested. No emojis unless tone is casual or funny.',
+    '- Write naturally, not robotically. Avoid "As a...", "In my opinion...", "Great post!"'
+  );
   var systemMessage = systemLines.join('\n');
 
   var userParts = [];
@@ -318,7 +343,10 @@ function buildPrompt(platform, task, tone, context, personality) {
   var maxTokens = 300;
   if (platform === 'x') maxTokens = 280;
   if (task === 'post' || task === 'expand') maxTokens = 500;
-  if (task === 'summarize') maxTokens = 150;
+  if (task === 'summarize' || task === 'shorten') maxTokens = 150;
+  if (task === 'quick_reply') maxTokens = 120;
+  if (task === 'hook') maxTokens = 80;
+  if (task === 'grammar') maxTokens = 400;
 
   return {
     messages: [
@@ -336,12 +364,13 @@ var DEFAULT_SETTINGS = {
   authMode: 'user_key',
   apiKey: '',
   openaiModel: 'gpt-4.1-mini',
-  glmModel: 'glm-4-flash',
+  glmModel: 'glm-5.1',
   geminiModel: 'gemini-2.5-flash',
   deepseekModel: 'deepseek-chat',
   qwenModel: 'qwen-plus',
   backendToken: '',
-  defaultTone: 'professional',
+  personalization: '',
+  defaultTone: 'casual',
   platforms: { linkedin: true, facebook: true, x: true, reddit: true }
 };
 
@@ -389,7 +418,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           data.task,
           data.tone,
           data.context,
-          data.personality
+          data.personality,
+          settings.personalization || ''
         );
 
         var providerOptions = {

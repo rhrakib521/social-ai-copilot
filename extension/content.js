@@ -1,7 +1,7 @@
 // content.js
 // Main content script entry point for Social AI Copilot.
-// Detects platform, watches for editable fields via MutationObserver,
-// creates triggers, manages popover lifecycle, and communicates with background.js.
+// Detects platform, listens for double-click on editable fields,
+// creates draggable popover with hover close button, and communicates with background.js.
 
 (function () {
   'use strict';
@@ -10,8 +10,8 @@
   var platformConfig = null;
   var platformName = null;
   var activeField = null;
-  var popoverController = null;
-  var observer = null;
+  var currentPopoverEl = null;
+  var savedSettings = null;
   var lastGeneratedText = '';
   var lastGeneratedAction = '';
   var lastGeneratedTone = '';
@@ -206,169 +206,255 @@
   }
 
   // ── UI ──
-  var currentPopoverEl = null;
-  var currentTriggerWrapper = null;
-
-  function removeExistingTrigger() {
-    if (currentTriggerWrapper && currentTriggerWrapper.parentNode) {
-      currentTriggerWrapper.parentNode.removeChild(currentTriggerWrapper);
+  // Walk up from clicked element to find the nearest editable field container
+  function findEditableField(el) {
+    if (!platformConfig) return null;
+    var current = el;
+    var depth = 0;
+    while (current && current !== document.body && depth < 12) {
+      if (current.matches) {
+        // Check platform-specific selectors
+        for (var i = 0; i < platformConfig.editableFields.length; i++) {
+          if (current.matches(platformConfig.editableFields[i])) return current;
+        }
+        // Generic contenteditable fallback
+        if (current.getAttribute && current.getAttribute('contenteditable') === 'true') return current;
+      }
+      // Textareas and text inputs
+      if (current.tagName === 'TEXTAREA') return current;
+      if (current.tagName === 'INPUT' && (current.type === 'text' || current.type === 'search')) return current;
+      current = current.parentElement;
+      depth++;
     }
-    currentTriggerWrapper = null;
+    return null;
+  }
+
+  function isEditableField(el) {
+    return findEditableField(el) !== null;
   }
 
   function hidePopover() {
-    if (currentPopoverEl && currentPopoverEl.parentNode) {
-      currentPopoverEl.parentNode.removeChild(currentPopoverEl);
+    if (currentPopoverEl) {
+      // Use remove() to trigger drag listener cleanup from makeDraggable
+      if (currentPopoverEl.remove) {
+        currentPopoverEl.remove();
+      } else if (currentPopoverEl.parentNode) {
+        currentPopoverEl.parentNode.removeChild(currentPopoverEl);
+      }
     }
     currentPopoverEl = null;
-    popoverController = null;
   }
 
-  function createTriggerForField(field) {
-    removeExistingTrigger();
-    hidePopover();
+  // ── Drag functionality ──
+  function makeDraggable(el, handle) {
+    var isDragging = false;
+    var startX = 0;
+    var startY = 0;
+    var startLeft = 0;
+    var startTop = 0;
 
-    var trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'saic-trigger';
-    trigger.setAttribute('aria-label', 'Open AI Copilot');
-    trigger.setAttribute('title', 'AI Copilot (Ctrl+Shift+A)');
-    trigger.textContent = 'AI';
-
-    var wrapper = document.createElement('div');
-    wrapper.className = 'saic-trigger-wrapper';
-    wrapper.appendChild(trigger);
-
-    field.parentNode.insertBefore(wrapper, field.nextSibling);
-
-    var rect = field.getBoundingClientRect();
-    wrapper.style.position = 'fixed';
-    wrapper.style.left = (rect.right - 44) + 'px';
-    wrapper.style.top = (rect.bottom + 4) + 'px';
-    wrapper.style.zIndex = '999998';
-
-    currentTriggerWrapper = wrapper;
-    activeField = field;
-
-    trigger.addEventListener('click', function (e) {
+    function onMouseDown(e) {
+      // Don't drag if clicking close button or interactive elements
+      if (e.target.closest('.saic-popover-close') || e.target.closest('button:not(.saic-popover-header)') || e.target.closest('select')) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = el.offsetLeft;
+      startTop = el.offsetTop;
+      handle.style.cursor = 'grabbing';
       e.preventDefault();
-      e.stopPropagation();
-      openPopover(trigger, field);
-    });
+    }
 
-    return { trigger: trigger, wrapper: wrapper, field: field };
+    function onMouseMove(e) {
+      if (!isDragging) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      el.style.left = (startLeft + dx) + 'px';
+      el.style.top = (startTop + dy) + 'px';
+    }
+
+    function onMouseUp() {
+      if (!isDragging) return;
+      isDragging = false;
+      handle.style.cursor = 'grab';
+    }
+
+    handle.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    // Cleanup when popover is removed
+    var origRemove = el.remove.bind(el);
+    el.remove = function () {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      origRemove();
+    };
   }
 
-  function openPopover(triggerEl, field) {
+  function openPopover(field) {
     hidePopover();
+    activeField = field;
 
     var popover = document.createElement('div');
     popover.className = 'saic-popover';
+    popover.style.position = 'fixed';
+    popover.style.zIndex = '999999';
 
-    // Header
-    var header = document.createElement('div');
-    header.className = 'saic-popover-header';
-
-    var title = document.createElement('span');
-    title.className = 'saic-popover-title';
-    title.textContent = 'AI Copilot';
-    header.appendChild(title);
-
+    // --- Close button (visible on hover of popover) ---
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'saic-popover-close';
-    closeBtn.setAttribute('aria-label', 'Close');
     closeBtn.textContent = '\u00d7';
-    closeBtn.addEventListener('click', function () { hidePopover(); });
-    header.appendChild(closeBtn);
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hidePopover();
+    });
+    popover.appendChild(closeBtn);
+
+    // --- Drag handle header ---
+    var header = document.createElement('div');
+    header.className = 'saic-popover-header';
+    header.textContent = '\u2728 AI Copilot';
     popover.appendChild(header);
 
-    // Actions
-    var actions = document.createElement('div');
-    actions.className = 'saic-popover-actions';
-    var actionTypes = [
+    // --- Slim toolbar ---
+    var toolbar = document.createElement('div');
+    toolbar.className = 'saic-toolbar';
+
+    var primaryActions = [
       { id: 'reply', label: 'Reply' },
       { id: 'comment', label: 'Comment' },
-      { id: 'post', label: 'New Post' },
-      { id: 'rewrite', label: 'Rewrite' },
+      { id: 'quick_reply', label: 'Quick' },
+      { id: 'post', label: 'Post' },
+      { id: 'rewrite', label: 'Rewrite' }
+    ];
+
+    var moreActions = [
+      { id: 'hook', label: 'Hook' },
+      { id: 'shorten', label: 'Shorten' },
       { id: 'expand', label: 'Expand' },
+      { id: 'grammar', label: 'Grammar' },
       { id: 'summarize', label: 'Summarize' }
     ];
-    actionTypes.forEach(function (action) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'saic-action-btn';
-      btn.textContent = action.label;
-      btn.setAttribute('data-action', action.id);
-      btn.addEventListener('click', function () {
-        handleAction(action.id, toneSelect.value, field, resultArea, insertBtn, regenBtn);
-      });
-      actions.appendChild(btn);
-    });
-    popover.appendChild(actions);
 
-    // Tone selector
-    var toneRow = document.createElement('div');
-    toneRow.className = 'saic-tone-row';
+    // Result card + action row (hidden initially)
+    var resultCard = document.createElement('div');
+    resultCard.className = 'saic-result-card';
+    resultCard.style.display = 'none';
 
-    var toneLabel = document.createElement('span');
-    toneLabel.className = 'saic-tone-label';
-    toneLabel.textContent = 'Tone:';
-    toneRow.appendChild(toneLabel);
+    var resultActions = document.createElement('div');
+    resultActions.className = 'saic-result-actions';
+    resultActions.style.display = 'none';
 
-    var toneSelect = document.createElement('select');
-    toneSelect.className = 'saic-tone-select';
-    ['professional', 'casual', 'witty', 'direct'].forEach(function (t) {
-      var opt = document.createElement('option');
-      opt.value = t;
-      opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
-      toneSelect.appendChild(opt);
-    });
-    toneRow.appendChild(toneSelect);
-    popover.appendChild(toneRow);
-
-    // Result area
-    var resultArea = document.createElement('div');
-    resultArea.className = 'saic-result-area';
-    resultArea.style.display = 'none';
-    popover.appendChild(resultArea);
-
-    // Insert button
     var insertBtn = document.createElement('button');
     insertBtn.type = 'button';
     insertBtn.className = 'saic-insert-btn';
     insertBtn.textContent = 'Insert';
-    insertBtn.style.display = 'none';
-    popover.appendChild(insertBtn);
 
-    // Regenerate button
     var regenBtn = document.createElement('button');
     regenBtn.type = 'button';
     regenBtn.className = 'saic-regen-btn';
     regenBtn.textContent = 'Regenerate';
-    regenBtn.style.display = 'none';
-    popover.appendChild(regenBtn);
 
-    // Position
-    var triggerRect = triggerEl.getBoundingClientRect();
-    popover.style.position = 'fixed';
-    popover.style.left = Math.max(8, triggerRect.left - 180) + 'px';
-    popover.style.top = (triggerRect.bottom + 8) + 'px';
-    popover.style.zIndex = '999999';
+    resultActions.appendChild(insertBtn);
+    resultActions.appendChild(regenBtn);
+
+    function handleChipClick(actionId) {
+      handleAction(actionId, toneSelect.value, field, resultCard, insertBtn, regenBtn, resultActions);
+    }
+
+    primaryActions.forEach(function (action) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'saic-chip';
+      chip.textContent = action.label;
+      chip.addEventListener('click', function () { handleChipClick(action.id); });
+      toolbar.appendChild(chip);
+    });
+
+    // More button + dropdown
+    var moreWrapper = document.createElement('div');
+    moreWrapper.style.position = 'relative';
+
+    var moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'saic-chip saic-chip-more';
+    moreBtn.textContent = 'More...';
+    moreWrapper.appendChild(moreBtn);
+
+    var moreMenu = document.createElement('div');
+    moreMenu.className = 'saic-more-menu';
+    moreMenu.style.display = 'none';
+
+    moreActions.forEach(function (action) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'saic-chip';
+      chip.textContent = action.label;
+      chip.addEventListener('click', function () {
+        handleChipClick(action.id);
+        moreMenu.style.display = 'none';
+      });
+      moreMenu.appendChild(chip);
+    });
+
+    moreWrapper.appendChild(moreMenu);
+    toolbar.appendChild(moreWrapper);
+
+    moreBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      moreMenu.style.display = moreMenu.style.display === 'none' ? 'flex' : 'none';
+    });
+
+    // Tone selector
+    var toneSelect = document.createElement('select');
+    toneSelect.className = 'saic-tone-select';
+    var defaultTone = (savedSettings && savedSettings.defaultTone) || 'casual';
+    ['casual', 'funny', 'informative'].forEach(function (t) {
+      var opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+      if (t === defaultTone) opt.selected = true;
+      toneSelect.appendChild(opt);
+    });
+    toolbar.appendChild(toneSelect);
+
+    popover.appendChild(toolbar);
+    popover.appendChild(resultCard);
+    popover.appendChild(resultActions);
+
+    // Position near the field
+    var rect = field.getBoundingClientRect();
+    var left = Math.max(8, rect.left);
+    var top = rect.bottom + 8;
+
+    // Keep within viewport
+    if (left + 384 > window.innerWidth) {
+      left = Math.max(8, window.innerWidth - 392);
+    }
+    if (top + 200 > window.innerHeight) {
+      top = Math.max(8, rect.top - 200);
+    }
+
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
 
     document.body.appendChild(popover);
     currentPopoverEl = popover;
+
+    // Make draggable via header
+    makeDraggable(popover, header);
   }
 
   // ── Action handler ──
-  function handleAction(task, tone, field, resultArea, insertBtn, regenBtn) {
+  function handleAction(task, tone, field, resultCard, insertBtn, regenBtn, resultActions) {
     var context = extractContext(field);
 
-    resultArea.style.display = 'block';
-    resultArea.textContent = 'Generating...';
-    resultArea.className = 'saic-result-area saic-loading';
-    insertBtn.style.display = 'none';
-    regenBtn.style.display = 'none';
+    resultCard.style.display = 'block';
+    resultCard.textContent = 'Generating...';
+    resultCard.className = 'saic-result-card saic-loading';
+    resultActions.style.display = 'none';
 
     lastGeneratedAction = task;
     lastGeneratedTone = tone;
@@ -385,21 +471,20 @@
       }
     }, function (response) {
       if (chrome.runtime.lastError) {
-        resultArea.textContent = 'Error: ' + chrome.runtime.lastError.message;
-        resultArea.className = 'saic-result-area saic-error';
+        resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
+        resultCard.className = 'saic-result-card saic-error';
         return;
       }
       if (response && response.error) {
-        resultArea.textContent = 'Error: ' + response.error;
-        resultArea.className = 'saic-result-area saic-error';
+        resultCard.textContent = 'Error: ' + response.error;
+        resultCard.className = 'saic-result-card saic-error';
         return;
       }
       if (response && response.text) {
         lastGeneratedText = response.text;
-        resultArea.textContent = response.text;
-        resultArea.className = 'saic-result-area';
-        insertBtn.style.display = 'block';
-        regenBtn.style.display = 'block';
+        resultCard.textContent = response.text;
+        resultCard.className = 'saic-result-card';
+        resultActions.style.display = 'flex';
 
         // Insert handler
         var newInsertBtn = insertBtn.cloneNode(true);
@@ -413,79 +498,25 @@
         var newRegenBtn = regenBtn.cloneNode(true);
         regenBtn.parentNode.replaceChild(newRegenBtn, regenBtn);
         newRegenBtn.addEventListener('click', function () {
-          handleAction(lastGeneratedAction, lastGeneratedTone, field, resultArea, newInsertBtn, newRegenBtn);
+          handleAction(lastGeneratedAction, lastGeneratedTone, field, resultCard, newInsertBtn, newRegenBtn, resultActions);
         });
       }
     });
   }
 
-  // ── MutationObserver ──
-  function isEditableField(el) {
-    if (!el || !el.matches) return false;
-    if (!platformConfig) return false;
-    for (var i = 0; i < platformConfig.editableFields.length; i++) {
-      if (el.matches(platformConfig.editableFields[i])) return true;
-    }
-    return false;
-  }
-
-  function setupObserver() {
-    if (observer) observer.disconnect();
-
-    observer = new MutationObserver(function (mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        var added = mutations[i].addedNodes;
-        if (!added) continue;
-        for (var j = 0; j < added.length; j++) {
-          var node = added[j];
-          if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          if (isEditableField(node)) {
-            createTriggerForField(node);
-          }
-          if (node.querySelectorAll) {
-            var selector = platformConfig.editableFields.join(', ');
-            var fields = node.querySelectorAll(selector);
-            for (var k = 0; k < fields.length; k++) {
-              createTriggerForField(fields[k]);
-            }
-          }
-        }
-      }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
-  // ── Focus listener ──
-  function setupFocusListener() {
-    document.addEventListener('focusin', function (e) {
-      var target = e.target;
-      if (isEditableField(target)) {
-        activeField = target;
-        if (!currentTriggerWrapper || currentTriggerWrapper.__saic_field !== target) {
-          var trig = createTriggerForField(target);
-          if (trig) trig.wrapper.__saic_field = target;
-        }
-      }
-    });
+  // ── Double-click listener ──
+  function setupDblClickListener() {
+    document.addEventListener('dblclick', handleDblClick, true);
   }
 
   // ── Keyboard shortcut handler (from background.js command) ──
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     if (message.type === 'triggerShortcut') {
       if (activeField) {
-        var existingTrigger = currentTriggerWrapper ? currentTriggerWrapper.querySelector('.saic-trigger') : null;
-        if (existingTrigger) {
-          openPopover(existingTrigger, activeField);
-        } else {
-          var trig = createTriggerForField(activeField);
-          if (trig && trig.trigger) {
-            openPopover(trig.trigger, activeField);
-          }
-        }
+        openPopover(activeField);
         sendResponse({ ok: true });
       } else {
-        sendResponse({ ok: false, error: 'No active editable field found.' });
+        sendResponse({ ok: false, error: 'No active editable field found. Double-click a comment or post box first.' });
       }
     }
   });
@@ -493,8 +524,22 @@
   // ── Click outside to close ──
   document.addEventListener('click', function (e) {
     if (currentPopoverEl && !currentPopoverEl.contains(e.target)) {
-      var isTrigger = e.target.classList && e.target.classList.contains('saic-trigger');
-      if (!isTrigger) hidePopover();
+      hidePopover();
+    }
+    // Close any open More menus when clicking outside
+    var openMenus = document.querySelectorAll('.saic-more-menu');
+    for (var i = 0; i < openMenus.length; i++) {
+      if (!openMenus[i].parentNode.contains(e.target)) {
+        openMenus[i].style.display = 'none';
+      }
+    }
+  });
+
+  // ── Track last focused editable field for keyboard shortcut ──
+  document.addEventListener('focusin', function (e) {
+    var field = findEditableField(e.target);
+    if (field) {
+      activeField = field;
     }
   });
 
@@ -506,21 +551,41 @@
     platformConfig = PLATFORMS[platformName];
     if (!platformConfig) return;
 
+    // Set up listeners immediately — don't gate on storage
+    setupDblClickListener();
+
+    // Load settings asynchronously (tone defaults, platform toggle)
     chrome.storage.local.get('socialAiCopilot_settings', function (result) {
+      if (chrome.runtime.lastError) {
+        // Storage read failed (e.g. invalidated context) — keep defaults
+        return;
+      }
       var settings = result.socialAiCopilot_settings || {};
       var platforms = settings.platforms || {};
-      if (platforms[platformName] === false) return;
+      if (platforms[platformName] === false) {
+        // Platform disabled — remove listener
+        document.removeEventListener('dblclick', handleDblClick, true);
+        return;
+      }
+      savedSettings = settings;
+    });
 
-      setupFocusListener();
-      setupObserver();
-
-      // Initial scan
-      var selector = platformConfig.editableFields.join(', ');
-      var existingFields = document.querySelectorAll(selector);
-      for (var i = 0; i < existingFields.length; i++) {
-        createTriggerForField(existingFields[i]);
+    // Keep settings fresh on changes
+    chrome.storage.onChanged.addListener(function (changes) {
+      if (changes.socialAiCopilot_settings) {
+        savedSettings = changes.socialAiCopilot_settings.newValue || {};
       }
     });
+  }
+
+  // Named handler so we can remove it if platform is disabled
+  function handleDblClick(e) {
+    var field = findEditableField(e.target);
+    if (field) {
+      e.preventDefault();
+      e.stopPropagation();
+      openPopover(field);
+    }
   }
 
   if (document.readyState === 'loading') {
