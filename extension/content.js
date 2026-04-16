@@ -838,6 +838,8 @@
         if (!confirm(msg)) return;
         this._confirmed = true;
       }
+      clearTimeout(this.nextActionTimeout);
+      clearInterval(this.countdownInterval);
       this.loadConfig();
       this.state = 'running';
       this.stats.commentsMade = 0;
@@ -1223,7 +1225,7 @@
       var selector = platformConfig.submitButtonSelector;
       if (!selector) { callback(false); return; }
 
-      var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || postEl;
+      var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
       var btn = container.querySelector(selector);
       if (!btn) {
         btn = postEl.querySelector(selector);
