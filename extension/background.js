@@ -374,6 +374,8 @@ var DEFAULT_SETTINGS = {
   backendToken: '',
   defaultTone: 'casual',
   contexts: [],
+  autoInterval: 60,
+  autoStopLimit: 0,
   platforms: { linkedin: true, facebook: true, x: true, reddit: true }
 };
 
