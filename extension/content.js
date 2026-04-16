@@ -776,6 +776,8 @@
         return;
       }
       savedSettings = settings;
+      // Initialize automation engine after settings are loaded
+      AutomationEngine.init();
     });
 
     // Keep settings fresh on changes
@@ -795,6 +797,716 @@
       openPopover(field);
     }
   }
+
+  // ══════════════════════════════════════════════════
+  // ── Automation Engine ──
+  // ══════════════════════════════════════════════════
+
+  var AutomationEngine = {
+    state: 'idle', // idle | running | paused | stopped
+    config: {
+      interval: 60,
+      stopLimit: 0
+    },
+    stats: {
+      commentsMade: 0,
+      startTime: null,
+      postsScanned: 0
+    },
+    processedPosts: new Set(),
+    panelEl: null,
+    btnEl: null,
+    timerInterval: null,
+    nextActionTimeout: null,
+    countdownInterval: null,
+    nextActionTime: null,
+    _abortScroll: false,
+
+    // ── Settings ──
+    loadConfig: function () {
+      var settings = savedSettings || {};
+      this.config.interval = Math.max(30, Math.min(300, settings.autoInterval || 60));
+      this.config.stopLimit = Math.max(0, settings.autoStopLimit || 0);
+    },
+
+    // ── Core Loop ──
+    start: function () {
+      this.loadConfig();
+      this.state = 'running';
+      this.stats.commentsMade = 0;
+      this.stats.startTime = Date.now();
+      this.stats.postsScanned = 0;
+      this.processedPosts = new Set();
+      this._abortScroll = false;
+      console.log('[SAIC-Auto] Started — interval:', this.config.interval + 's, stop limit:', this.config.stopLimit || 'unlimited');
+      this.updateUI();
+      this.runCycle();
+    },
+
+    stop: function (reason) {
+      this.state = 'stopped';
+      this._abortScroll = true;
+      clearTimeout(this.nextActionTimeout);
+      clearInterval(this.countdownInterval);
+      this.nextActionTimeout = null;
+      this.countdownInterval = null;
+      this.nextActionTime = null;
+      console.log('[SAIC-Auto] Stopped' + (reason ? ' — ' + reason : ''));
+      this.updateUI();
+    },
+
+    pause: function () {
+      if (this.state !== 'running') return;
+      this.state = 'paused';
+      this._abortScroll = true;
+      clearTimeout(this.nextActionTimeout);
+      clearInterval(this.countdownInterval);
+      this.nextActionTimeout = null;
+      this.countdownInterval = null;
+      this.nextActionTime = null;
+      console.log('[SAIC-Auto] Paused at ' + this.stats.commentsMade + ' comments');
+      this.updateUI();
+    },
+
+    resume: function () {
+      if (this.state !== 'paused') return;
+      this.state = 'running';
+      this._abortScroll = false;
+      console.log('[SAIC-Auto] Resumed');
+      this.updateUI();
+      this.runCycle();
+    },
+
+    runCycle: function () {
+      var self = this;
+      if (self.state !== 'running') return;
+
+      // Check stop limit
+      if (self.config.stopLimit > 0 && self.stats.commentsMade >= self.config.stopLimit) {
+        self.stop('limit reached (' + self.config.stopLimit + ' comments)');
+        return;
+      }
+
+      // Find next post
+      var post = self.findNextPost();
+      if (!post) {
+        console.log('[SAIC-Auto] No uncommented post found, scrolling...');
+        self.humanScroll(window.scrollY + window.innerHeight * (1 + Math.random() * 2), function () {
+          if (self.state !== 'running') return;
+          setTimeout(function () {
+            post = self.findNextPost();
+            if (!post) {
+              console.log('[SAIC-Auto] No posts found after scroll, retrying in 10s...');
+              self.scheduleNextCycle(10000);
+              return;
+            }
+            self.processPost(post);
+          }, 1500 + Math.random() * 1500);
+        });
+        return;
+      }
+
+      self.processPost(post);
+    },
+
+    processPost: function (post) {
+      var self = this;
+      if (self.state !== 'running') return;
+
+      var postId = self.getPostFingerprint(post);
+      self.processedPosts.add(postId);
+      self.stats.postsScanned++;
+
+      self.scrollToPost(post, function () {
+        if (self.state !== 'running') return;
+
+        var readDelay = 3000 + Math.random() * 5000;
+        console.log('[SAIC-Auto] Reading post for ' + Math.round(readDelay / 1000) + 's...');
+        self.updateCountdown(readDelay, 'Reading...');
+
+        setTimeout(function () {
+          if (self.state !== 'running') return;
+
+          var context = self.extractPostContext(post);
+
+          self.generateComment(context, function (text) {
+            if (self.state !== 'running') return;
+            if (!text) {
+              console.log('[SAIC-Auto] Comment generation failed, skipping post');
+              self.scheduleNextCycle(5000);
+              return;
+            }
+
+            self.typeAndSubmit(post, text, function (success) {
+              if (success) {
+                self.stats.commentsMade++;
+                console.log('[SAIC-Auto] Comment #' + self.stats.commentsMade + ' posted: "' + text.substring(0, 60) + '..."');
+              } else {
+                console.log('[SAIC-Auto] Failed to submit comment, moving on');
+              }
+              self.updateUI();
+
+              var extraPause = (self.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0)
+                ? 5000 + Math.random() * 10000
+                : 0;
+              self.scheduleNextCycle(self.config.interval * 1000 + extraPause);
+            });
+          });
+        }, readDelay);
+      });
+    },
+
+    scheduleNextCycle: function (delayMs) {
+      var self = this;
+      if (self.state !== 'running') return;
+
+      console.log('[SAIC-Auto] Next in ' + Math.round(delayMs / 1000) + 's');
+      self.updateCountdown(delayMs, 'Next in');
+
+      self.nextActionTimeout = setTimeout(function () {
+        if (self.state === 'running') {
+          self.runCycle();
+        }
+      }, delayMs);
+    },
+
+    updateCountdown: function (totalMs, prefix) {
+      var self = this;
+      clearInterval(self.countdownInterval);
+      if (!self.panelEl) return;
+
+      var timerEl = self.panelEl.querySelector('.saic-auto-timer');
+      if (!timerEl) return;
+
+      var remaining = totalMs;
+      timerEl.textContent = prefix + ' ' + Math.ceil(remaining / 1000) + 's';
+
+      self.countdownInterval = setInterval(function () {
+        remaining -= 1000;
+        if (remaining <= 0) {
+          clearInterval(self.countdownInterval);
+          timerEl.textContent = 'Working...';
+          return;
+        }
+        timerEl.textContent = prefix + ' ' + Math.ceil(remaining / 1000) + 's';
+      }, 1000);
+    },
+
+    // ── Post Detection ──
+    findNextPost: function () {
+      if (!platformConfig || !platformConfig.postSelector) return null;
+      var posts = document.querySelectorAll(platformConfig.postSelector);
+      for (var i = 0; i < posts.length; i++) {
+        var fp = this.getPostFingerprint(posts[i]);
+        if (!this.processedPosts.has(fp) && !this.isAlreadyCommented(posts[i])) {
+          return posts[i];
+        }
+      }
+      return null;
+    },
+
+    getPostFingerprint: function (el) {
+      var text = (el.innerText || '').substring(0, 200).trim();
+      var rect = el.getBoundingClientRect();
+      return text.length.toString(36) + '_' + Math.round(rect.top).toString(36) + '_' + el.tagName + '_' + el.className.substring(0, 30);
+    },
+
+    isAlreadyCommented: function (postEl) {
+      // Rely on processedPosts set for dedup — DOM-based user detection is unreliable
+      return false;
+    },
+
+    extractPostContext: function (postEl) {
+      var text = extractText(postEl, 2000);
+      var author = '';
+      if (platformConfig.authorSelector) {
+        var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
+        if (authorEls.length > 0) {
+          author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
+        }
+      }
+
+      var siblings = postEl.parentElement ? postEl.parentElement.children : [];
+      var comments = [];
+      for (var i = 0; i < siblings.length && comments.length < 5; i++) {
+        if (siblings[i] !== postEl) {
+          for (var j = 0; j < platformConfig.postContainers.length; j++) {
+            if (siblings[i].matches && siblings[i].matches(platformConfig.postContainers[j])) {
+              var ct = extractText(siblings[i], 500);
+              if (ct) comments.push(ct);
+              break;
+            }
+          }
+        }
+      }
+
+      return {
+        postText: text,
+        author: author,
+        nearbyComments: comments,
+        selectedText: ''
+      };
+    },
+
+    // ── AI Generation ──
+    generateComment: function (context, callback) {
+      var self = this;
+      var tone = (savedSettings && savedSettings.defaultTone) || 'casual';
+
+      var contextInfo = '';
+      var allContexts = (savedSettings && savedSettings.contexts) || [];
+      var defaultCtx = allContexts.find(function (c) { return c.isDefault; });
+      if (defaultCtx) contextInfo = defaultCtx.body;
+
+      chrome.runtime.sendMessage({
+        type: 'generate',
+        data: {
+          platform: platformName,
+          task: 'quick_reply',
+          tone: tone,
+          context: context,
+          personality: platformConfig.personality,
+          contextInfo: contextInfo
+        }
+      }, function (response) {
+        if (chrome.runtime.lastError) {
+          console.log('[SAIC-Auto] Generate error:', chrome.runtime.lastError.message);
+          callback(null);
+          return;
+        }
+        if (response && response.error) {
+          console.log('[SAIC-Auto] Generate API error:', response.error);
+          callback(null);
+          return;
+        }
+        if (response && response.text) {
+          callback(response.text);
+          return;
+        }
+        callback(null);
+      });
+    },
+
+    // ── Comment Submission ──
+    typeAndSubmit: function (postEl, text, callback) {
+      var self = this;
+      if (self.state !== 'running') { callback(false); return; }
+
+      self.clickCommentButton(postEl, function (replyField) {
+        if (!replyField) {
+          console.log('[SAIC-Auto] Could not find reply field after clicking comment button');
+          callback(false);
+          return;
+        }
+
+        self.typeComment(replyField, text, function () {
+          if (self.state !== 'running') { callback(false); return; }
+
+          setTimeout(function () {
+            self.clickSubmitButton(postEl, replyField, function (success) {
+              callback(success);
+            });
+          }, 500 + Math.random() * 500);
+        });
+      });
+    },
+
+    clickCommentButton: function (postEl, callback) {
+      var selector = platformConfig.commentButtonSelector;
+      if (!selector) { callback(null); return; }
+
+      var btn = postEl.querySelector(selector);
+      if (!btn) {
+        var parent = postEl.parentElement;
+        if (parent) btn = parent.querySelector(selector);
+      }
+      if (!btn) { callback(null); return; }
+
+      btn.click();
+      console.log('[SAIC-Auto] Clicked comment button');
+
+      var attempts = 0;
+      var maxAttempts = 10;
+      var findField = function () {
+        attempts++;
+        var field = null;
+        var replySelector = platformConfig.replyFieldSelector;
+        if (replySelector) {
+          var candidates = document.querySelectorAll(replySelector);
+          for (var i = 0; i < candidates.length; i++) {
+            var rect = candidates[i].getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              field = candidates[i];
+              break;
+            }
+          }
+        }
+        if (field) {
+          callback(field);
+        } else if (attempts < maxAttempts) {
+          setTimeout(findField, 200);
+        } else {
+          callback(null);
+        }
+      };
+      setTimeout(findField, 300);
+    },
+
+    typeComment: function (field, text, callback) {
+      var self = this;
+      field.focus();
+      field.scrollIntoView({ block: 'center' });
+
+      var chars = text.split('');
+      var i = 0;
+
+      var typeNext = function () {
+        if (self.state !== 'running' || i >= chars.length) {
+          if (i >= chars.length) callback();
+          return;
+        }
+
+        var char = chars[i];
+        field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: char }));
+        field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, key: char }));
+
+        if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
+          var start = field.selectionStart;
+          var val = field.value;
+          field.value = val.substring(0, start) + char + val.substring(start);
+          field.selectionStart = field.selectionEnd = start + 1;
+        } else {
+          document.execCommand('insertText', false, char);
+        }
+
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: char }));
+
+        i++;
+
+        var delay = 30 + Math.random() * 50;
+        if (Math.random() < 0.1) delay += 100 + Math.random() * 100;
+
+        setTimeout(typeNext, delay);
+      };
+
+      typeNext();
+    },
+
+    clickSubmitButton: function (postEl, replyField, callback) {
+      var selector = platformConfig.submitButtonSelector;
+      if (!selector) { callback(false); return; }
+
+      var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || postEl;
+      var btn = container.querySelector(selector);
+      if (!btn) {
+        btn = postEl.querySelector(selector);
+      }
+      if (!btn) {
+        var allBtns = container.querySelectorAll('button');
+        for (var i = 0; i < allBtns.length; i++) {
+          var txt = (allBtns[i].textContent || '').toLowerCase().trim();
+          if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') {
+            btn = allBtns[i];
+            break;
+          }
+        }
+      }
+
+      if (!btn) {
+        console.log('[SAIC-Auto] No submit button found');
+        callback(false);
+        return;
+      }
+
+      var rect = btn.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        console.log('[SAIC-Auto] Submit button not visible');
+        callback(false);
+        return;
+      }
+
+      btn.click();
+      console.log('[SAIC-Auto] Clicked submit button');
+      callback(true);
+    },
+
+    // ── Human-Like Scrolling ──
+    humanScroll: function (targetY, callback) {
+      var self = this;
+      var startY = window.scrollY;
+      var distance = targetY - startY;
+      if (Math.abs(distance) < 10) { if (callback) callback(); return; }
+
+      var direction = distance > 0 ? 1 : -1;
+      var totalDuration = Math.abs(distance) / (300 + Math.random() * 300) * 1000;
+      totalDuration = Math.max(500, Math.min(3000, totalDuration));
+
+      var startTime = null;
+      var lastPauseAt = 0;
+
+      function step(timestamp) {
+        if (self._abortScroll || self.state !== 'running') {
+          if (callback) callback();
+          return;
+        }
+
+        if (!startTime) startTime = timestamp;
+        var elapsed = timestamp - startTime;
+        var progress = Math.min(elapsed / totalDuration, 1);
+
+        var eased = progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+        var currentY = startY + distance * eased;
+        window.scrollTo(0, currentY);
+
+        if (progress - lastPauseAt > 0.15 + Math.random() * 0.2 && progress < 0.9) {
+          lastPauseAt = progress;
+          var pauseMs = 300 + Math.random() * 700;
+          setTimeout(function () {
+            requestAnimationFrame(step);
+          }, pauseMs);
+          return;
+        }
+
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
+          if (callback) callback();
+        }
+      }
+
+      requestAnimationFrame(step);
+    },
+
+    scrollToPost: function (postEl, callback) {
+      var rect = postEl.getBoundingClientRect();
+      var targetY = window.scrollY + rect.top - 100;
+      this.humanScroll(targetY, callback);
+    },
+
+    // ── Floating Panel UI ──
+    createPanel: function () {
+      var self = this;
+      if (self.panelEl) return;
+
+      self.btnEl = document.createElement('button');
+      self.btnEl.type = 'button';
+      self.btnEl.className = 'saic-auto-btn';
+      self.btnEl.title = 'AI Copilot Automation';
+      self.btnEl.textContent = '\u25B6';
+      self.btnEl.addEventListener('click', function () {
+        self.togglePanel();
+      });
+
+      self.panelEl = document.createElement('div');
+      self.panelEl.className = 'saic-auto-panel';
+      self.panelEl.style.display = 'none';
+
+      self.panelEl.innerHTML =
+        '<div class="saic-auto-header">' +
+          '<span class="saic-auto-title">Auto Comment</span>' +
+          '<button type="button" class="saic-auto-close" title="Close panel">&times;</button>' +
+        '</div>' +
+        '<div class="saic-auto-body">' +
+          '<div class="saic-auto-status">' +
+            '<div class="saic-auto-dot"></div>' +
+            '<span class="saic-auto-status-text">Idle</span>' +
+          '</div>' +
+          '<div class="saic-auto-stats">' +
+            '<span class="saic-auto-stat">Comments: <strong>0</strong>/<span class="saic-auto-limit">\u221E</span></span>' +
+            '<span class="saic-auto-stat">Time: <strong class="saic-auto-elapsed">0:00</strong></span>' +
+          '</div>' +
+          '<div class="saic-auto-timer"></div>' +
+          '<div class="saic-auto-controls">' +
+            '<button type="button" class="saic-auto-toggle-btn saic-auto-start">Start</button>' +
+            '<button type="button" class="saic-auto-toggle-btn saic-auto-pause" style="display:none;">Pause</button>' +
+            '<button type="button" class="saic-auto-gear" title="Settings">\u2699</button>' +
+          '</div>' +
+          '<div class="saic-auto-config">' +
+            '<div class="saic-auto-field">' +
+              '<label>Interval (sec)</label>' +
+              '<input type="number" class="saic-auto-cfg-interval" min="30" max="300" value="60">' +
+            '</div>' +
+            '<div class="saic-auto-field">' +
+              '<label>Stop after (0=off)</label>' +
+              '<input type="number" class="saic-auto-cfg-limit" min="0" max="500" value="0">' +
+            '</div>' +
+            '<div class="saic-auto-platform">Platform: ' + (platformName || 'unknown') + '</div>' +
+          '</div>' +
+        '</div>';
+
+      document.body.appendChild(self.btnEl);
+      document.body.appendChild(self.panelEl);
+
+      // Wire up events
+      self.panelEl.querySelector('.saic-auto-close').addEventListener('click', function () {
+        self.panelEl.style.display = 'none';
+      });
+
+      var startBtn = self.panelEl.querySelector('.saic-auto-start');
+      var pauseBtn = self.panelEl.querySelector('.saic-auto-pause');
+
+      startBtn.addEventListener('click', function () {
+        if (self.state === 'idle' || self.state === 'stopped') {
+          self.config.interval = Math.max(30, Math.min(300, parseInt(self.panelEl.querySelector('.saic-auto-cfg-interval').value, 10) || 60));
+          self.config.stopLimit = Math.max(0, parseInt(self.panelEl.querySelector('.saic-auto-cfg-limit').value, 10) || 0);
+          self.start();
+        } else if (self.state === 'paused') {
+          self.resume();
+        }
+      });
+
+      pauseBtn.addEventListener('click', function () {
+        if (self.state === 'running') {
+          self.pause();
+        } else if (self.state === 'paused') {
+          self.resume();
+        }
+      });
+
+      self.panelEl.querySelector('.saic-auto-gear').addEventListener('click', function () {
+        var config = self.panelEl.querySelector('.saic-auto-config');
+        config.classList.toggle('open');
+      });
+
+      self.makePanelDraggable();
+    },
+
+    togglePanel: function () {
+      if (!this.panelEl) return;
+      this.panelEl.style.display = this.panelEl.style.display === 'none' ? 'block' : 'none';
+    },
+
+    makePanelDraggable: function () {
+      var self = this;
+      var header = self.panelEl.querySelector('.saic-auto-header');
+      if (!header) return;
+
+      var isDragging = false;
+      var startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+      header.addEventListener('mousedown', function (e) {
+        if (e.target.closest('.saic-auto-close')) return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = self.panelEl.offsetLeft;
+        startTop = self.panelEl.offsetTop;
+        header.style.cursor = 'grabbing';
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', function (e) {
+        if (!isDragging) return;
+        var dx = e.clientX - startX;
+        var dy = e.clientY - startY;
+        self.panelEl.style.left = (startLeft + dx) + 'px';
+        self.panelEl.style.top = (startTop + dy) + 'px';
+        self.panelEl.style.right = 'auto';
+        self.panelEl.style.bottom = 'auto';
+      });
+
+      document.addEventListener('mouseup', function () {
+        if (isDragging) {
+          isDragging = false;
+          header.style.cursor = 'grab';
+        }
+      });
+    },
+
+    updateUI: function () {
+      var self = this;
+      if (!self.panelEl) return;
+
+      var dot = self.panelEl.querySelector('.saic-auto-dot');
+      var statusText = self.panelEl.querySelector('.saic-auto-status-text');
+      var startBtn = self.panelEl.querySelector('.saic-auto-start');
+      var pauseBtn = self.panelEl.querySelector('.saic-auto-pause');
+      var timerEl = self.panelEl.querySelector('.saic-auto-timer');
+      var commentsStrong = self.panelEl.querySelector('.saic-auto-stat strong');
+      var limitEl = self.panelEl.querySelector('.saic-auto-limit');
+      var elapsedEl = self.panelEl.querySelector('.saic-auto-elapsed');
+
+      dot.className = 'saic-auto-dot';
+
+      switch (self.state) {
+        case 'idle':
+          dot.classList.add('stopped');
+          statusText.textContent = 'Idle';
+          startBtn.textContent = 'Start';
+          startBtn.className = 'saic-auto-toggle-btn saic-auto-start';
+          startBtn.style.display = '';
+          pauseBtn.style.display = 'none';
+          timerEl.textContent = '';
+          self.btnEl.className = 'saic-auto-btn';
+          self.btnEl.textContent = '\u25B6';
+          break;
+        case 'running':
+          dot.classList.add('running');
+          statusText.textContent = 'Running';
+          startBtn.style.display = 'none';
+          pauseBtn.textContent = 'Pause';
+          pauseBtn.className = 'saic-auto-toggle-btn saic-auto-pause';
+          pauseBtn.style.display = '';
+          self.btnEl.className = 'saic-auto-btn running';
+          self.btnEl.textContent = '\u23F8';
+          break;
+        case 'paused':
+          dot.classList.add('paused');
+          statusText.textContent = 'Paused';
+          startBtn.textContent = 'Resume';
+          startBtn.className = 'saic-auto-toggle-btn saic-auto-start';
+          startBtn.style.display = '';
+          pauseBtn.style.display = 'none';
+          self.btnEl.className = 'saic-auto-btn';
+          self.btnEl.textContent = '\u25B6';
+          break;
+        case 'stopped':
+          dot.classList.add('stopped');
+          statusText.textContent = 'Stopped (' + self.stats.commentsMade + ' comments)';
+          startBtn.textContent = 'Restart';
+          startBtn.className = 'saic-auto-toggle-btn saic-auto-start';
+          startBtn.style.display = '';
+          pauseBtn.style.display = 'none';
+          timerEl.textContent = '';
+          self.btnEl.className = 'saic-auto-btn';
+          self.btnEl.textContent = '\u25B6';
+          break;
+      }
+
+      if (commentsStrong) commentsStrong.textContent = self.stats.commentsMade;
+      if (limitEl) limitEl.textContent = self.config.stopLimit || '\u221E';
+      if (elapsedEl) elapsedEl.textContent = self.formatElapsed();
+
+      var cfgInterval = self.panelEl.querySelector('.saic-auto-cfg-interval');
+      var cfgLimit = self.panelEl.querySelector('.saic-auto-cfg-limit');
+      if (cfgInterval) cfgInterval.value = self.config.interval;
+      if (cfgLimit) cfgLimit.value = self.config.stopLimit;
+    },
+
+    formatElapsed: function () {
+      if (!this.stats.startTime) return '0:00';
+      var ms = Date.now() - this.stats.startTime;
+      var secs = Math.floor(ms / 1000);
+      var mins = Math.floor(secs / 60);
+      var hrs = Math.floor(mins / 60);
+      if (hrs > 0) {
+        return hrs + ':' + String(mins % 60).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
+      }
+      return mins + ':' + String(secs % 60).padStart(2, '0');
+    },
+
+    // ── Initialization ──
+    init: function () {
+      if (!platformConfig || !platformConfig.postSelector) return;
+      this.loadConfig();
+      this.createPanel();
+      console.log('[SAIC-Auto] Panel created for ' + platformName);
+    }
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
