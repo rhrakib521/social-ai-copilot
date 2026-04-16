@@ -229,10 +229,6 @@
     return null;
   }
 
-  function isEditableField(el) {
-    return findEditableField(el) !== null;
-  }
-
   function hidePopover() {
     if (currentPopoverEl) {
       // Use remove() to trigger drag listener cleanup from makeDraggable
@@ -360,10 +356,6 @@
     resultActions.appendChild(insertBtn);
     resultActions.appendChild(regenBtn);
 
-    function handleChipClick(actionId) {
-      handleAction(actionId, toneSelect.value, field, resultCard, insertBtn, regenBtn, resultActions);
-    }
-
     primaryActions.forEach(function (action) {
       var chip = document.createElement('button');
       chip.type = 'button';
@@ -407,7 +399,10 @@
       moreMenu.style.display = moreMenu.style.display === 'none' ? 'flex' : 'none';
     });
 
-    // Tone selector
+    // Tone + Context selector row (side by side)
+    var selectRow = document.createElement('div');
+    selectRow.className = 'saic-select-row';
+
     var toneSelect = document.createElement('select');
     toneSelect.className = 'saic-tone-select';
     var defaultTone = (savedSettings && savedSettings.defaultTone) || 'casual';
@@ -418,11 +413,198 @@
       if (t === defaultTone) opt.selected = true;
       toneSelect.appendChild(opt);
     });
-    toolbar.appendChild(toneSelect);
+    selectRow.appendChild(toneSelect);
+
+    // Context selector (only shown when contexts exist)
+    var allContexts = (savedSettings && savedSettings.contexts) || [];
+    var defaultCtxId = '';
+    var contextSelect = null;
+    if (allContexts.length > 0) {
+      contextSelect = document.createElement('select');
+      contextSelect.className = 'saic-context-select';
+      var noCtxOpt = document.createElement('option');
+      noCtxOpt.value = '';
+      noCtxOpt.textContent = 'No Context';
+      contextSelect.appendChild(noCtxOpt);
+      allContexts.forEach(function (ctx) {
+        var opt = document.createElement('option');
+        opt.value = ctx.id;
+        opt.textContent = ctx.name + (ctx.isDefault ? ' \u2605' : '');
+        if (ctx.isDefault) {
+          defaultCtxId = ctx.id;
+          opt.selected = true;
+        }
+        contextSelect.appendChild(opt);
+      });
+      selectRow.appendChild(contextSelect);
+    }
+    toolbar.appendChild(selectRow);
+
+    // ── Post writing panel (different UI for post task) ──
+    var postPanel = document.createElement('div');
+    postPanel.className = 'saic-post-panel';
+    postPanel.style.display = 'none';
+
+    var postPanelLabel = document.createElement('div');
+    postPanelLabel.className = 'saic-post-panel-label';
+    postPanelLabel.textContent = 'What do you want to post about?';
+    postPanel.appendChild(postPanelLabel);
+
+    var postInput = document.createElement('textarea');
+    postInput.className = 'saic-post-input';
+    postInput.placeholder = 'Describe your topic, paste a draft, or add key points...';
+    postInput.rows = 3;
+    postInput.addEventListener('input', function () {
+      postInput.style.borderColor = '';
+    });
+    postPanel.appendChild(postInput);
+
+    // Context pills row for post panel (only when contexts exist)
+    var postCtxRow = document.createElement('div');
+    postCtxRow.className = 'saic-post-ctx-row';
+    var postSelectedCtxIds = [];
+    if (allContexts.length > 0) {
+      var postCtxLabel = document.createElement('span');
+      postCtxLabel.className = 'saic-post-ctx-label';
+      postCtxLabel.textContent = 'Contexts:';
+      postCtxRow.appendChild(postCtxLabel);
+      if (defaultCtxId) postSelectedCtxIds.push(defaultCtxId);
+
+      allContexts.forEach(function (ctx) {
+        var pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'saic-ctx-pill' + (postSelectedCtxIds.indexOf(ctx.id) !== -1 ? ' saic-ctx-pill-active' : '');
+        pill.textContent = ctx.name;
+        pill.dataset.ctxId = ctx.id;
+        if (ctx.isDefault) pill.textContent += ' \u2605';
+        pill.addEventListener('click', function () {
+          var idx = postSelectedCtxIds.indexOf(ctx.id);
+          if (idx !== -1) {
+            postSelectedCtxIds.splice(idx, 1);
+            pill.classList.remove('saic-ctx-pill-active');
+          } else {
+            postSelectedCtxIds.push(ctx.id);
+            pill.classList.add('saic-ctx-pill-active');
+          }
+        });
+        postCtxRow.appendChild(pill);
+      });
+      postPanel.appendChild(postCtxRow);
+    }
+
+    var postActionsRow = document.createElement('div');
+    postActionsRow.className = 'saic-post-actions-row';
+    var postGenerateBtn = document.createElement('button');
+    postGenerateBtn.type = 'button';
+    postGenerateBtn.className = 'saic-insert-btn';
+    postGenerateBtn.style.flex = '1';
+    postGenerateBtn.textContent = 'Generate Post';
+    postActionsRow.appendChild(postGenerateBtn);
+    postPanel.appendChild(postActionsRow);
 
     popover.appendChild(toolbar);
+    popover.appendChild(postPanel);
     popover.appendChild(resultCard);
     popover.appendChild(resultActions);
+
+    // ── Post mode toggle ──
+    var isPostMode = false;
+    function setPostMode(on) {
+      isPostMode = on;
+      postPanel.style.display = on ? 'block' : 'none';
+      // Hide normal result area in post mode until generated
+      if (on) {
+        resultCard.style.display = 'none';
+        resultActions.style.display = 'none';
+      }
+    }
+
+    // Override chip click to handle post mode
+    function handleChipClick(actionId) {
+      if (actionId === 'post') {
+        setPostMode(true);
+        postInput.focus();
+        return;
+      }
+      setPostMode(false);
+      handleAction(actionId, toneSelect.value, contextSelect ? contextSelect.value : '', field, resultCard, insertBtn, regenBtn, resultActions);
+    }
+
+    // Post generate handler
+    postGenerateBtn.addEventListener('click', function () {
+      var userTopic = postInput.value.trim();
+      if (!userTopic) {
+        postInput.style.borderColor = '#ef4444';
+        return;
+      }
+      postInput.style.borderColor = '#e2e8f0';
+
+      // Collect selected contexts
+      var selectedCtxTexts = [];
+      postSelectedCtxIds.forEach(function (cid) {
+        var match = allContexts.find(function (c) { return c.id === cid; });
+        if (match) selectedCtxTexts.push(match.body);
+      });
+
+      resultCard.style.display = 'block';
+      resultCard.textContent = 'Generating...';
+      resultCard.className = 'saic-result-card saic-loading';
+      resultActions.style.display = 'none';
+
+      lastGeneratedAction = 'post';
+      lastGeneratedTone = toneSelect.value;
+
+      // Build context with user's topic
+      var postContext = {
+        postText: userTopic,
+        author: '',
+        nearbyComments: [],
+        selectedText: '',
+        extraContexts: selectedCtxTexts
+      };
+
+      chrome.runtime.sendMessage({
+        type: 'generate',
+        data: {
+          platform: platformName,
+          task: 'post',
+          tone: toneSelect.value,
+          context: postContext,
+          personality: platformConfig.personality,
+          contextInfo: selectedCtxTexts.join('\n')
+        }
+      }, function (response) {
+        if (chrome.runtime.lastError) {
+          resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
+          resultCard.className = 'saic-result-card saic-error';
+          return;
+        }
+        if (response && response.error) {
+          resultCard.textContent = 'Error: ' + response.error;
+          resultCard.className = 'saic-result-card saic-error';
+          return;
+        }
+        if (response && response.text) {
+          lastGeneratedText = response.text;
+          resultCard.textContent = response.text;
+          resultCard.className = 'saic-result-card';
+          resultActions.style.display = 'flex';
+
+          var newInsertBtn = insertBtn.cloneNode(true);
+          insertBtn.parentNode.replaceChild(newInsertBtn, insertBtn);
+          newInsertBtn.addEventListener('click', function () {
+            insertTextAtCursor(field, response.text);
+            hidePopover();
+          });
+
+          var newRegenBtn = regenBtn.cloneNode(true);
+          regenBtn.parentNode.replaceChild(newRegenBtn, regenBtn);
+          newRegenBtn.addEventListener('click', function () {
+            postGenerateBtn.click();
+          });
+        }
+      });
+    });
 
     // Position near the field
     var rect = field.getBoundingClientRect();
@@ -433,8 +615,9 @@
     if (left + 384 > window.innerWidth) {
       left = Math.max(8, window.innerWidth - 392);
     }
-    if (top + 200 > window.innerHeight) {
-      top = Math.max(8, rect.top - 200);
+    // Initial height estimate — post mode adds ~180px dynamically
+    if (top + 280 > window.innerHeight) {
+      top = Math.max(8, rect.top - 280);
     }
 
     popover.style.left = left + 'px';
@@ -448,8 +631,16 @@
   }
 
   // ── Action handler ──
-  function handleAction(task, tone, field, resultCard, insertBtn, regenBtn, resultActions) {
+  function handleAction(task, tone, contextId, field, resultCard, insertBtn, regenBtn, resultActions) {
     var context = extractContext(field);
+
+    // Resolve context info — only use what's explicitly selected
+    var contextInfo = '';
+    if (contextId) {
+      var allCtxs = (savedSettings && savedSettings.contexts) || [];
+      var match = allCtxs.find(function (c) { return c.id === contextId; });
+      if (match) contextInfo = match.body;
+    }
 
     resultCard.style.display = 'block';
     resultCard.textContent = 'Generating...';
@@ -467,7 +658,8 @@
         task: task,
         tone: tone,
         context: context,
-        personality: platformConfig.personality
+        personality: platformConfig.personality,
+        contextInfo: contextInfo
       }
     }, function (response) {
       if (chrome.runtime.lastError) {
@@ -498,7 +690,7 @@
         var newRegenBtn = regenBtn.cloneNode(true);
         regenBtn.parentNode.replaceChild(newRegenBtn, regenBtn);
         newRegenBtn.addEventListener('click', function () {
-          handleAction(lastGeneratedAction, lastGeneratedTone, field, resultCard, newInsertBtn, newRegenBtn, resultActions);
+          handleAction(lastGeneratedAction, lastGeneratedTone, contextId, field, resultCard, newInsertBtn, newRegenBtn, resultActions);
         });
       }
     });

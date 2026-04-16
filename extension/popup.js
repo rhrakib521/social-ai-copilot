@@ -26,8 +26,6 @@
   var backendTokenGroup = document.getElementById('backendTokenGroup');
   var backendTokenInput = document.getElementById('backendToken');
   var defaultToneSelect = document.getElementById('defaultTone');
-  var personalizationInput = document.getElementById('personalization');
-  var charCountEl = document.getElementById('charCount');
   var historyList = document.getElementById('historyList');
   var clearHistoryBtn = document.getElementById('clearHistoryBtn');
   var saveBtn = document.getElementById('saveBtn');
@@ -105,11 +103,6 @@
 
   providerSelect.addEventListener('change', updateProviderUI);
 
-  // ── Char counter for personalization ──
-  personalizationInput.addEventListener('input', function () {
-    charCountEl.textContent = personalizationInput.value.length;
-  });
-
   // ── Load settings ──
   function loadSettings() {
     chrome.runtime.sendMessage({ type: 'getSettings' }, function (settings) {
@@ -118,8 +111,6 @@
       apiKeyInput.value = settings.apiKey || '';
       backendTokenInput.value = settings.backendToken || '';
       defaultToneSelect.value = settings.defaultTone || 'casual';
-      personalizationInput.value = settings.personalization || '';
-      charCountEl.textContent = (settings.personalization || '').length;
 
       if (settings.openaiModel) setModelUI(openaiModelSelect, openaiModelCustom, settings.openaiModel);
       if (settings.glmModel) setModelUI(glmModelSelect, glmModelCustom, settings.glmModel);
@@ -134,6 +125,10 @@
       document.getElementById('platform-reddit').checked = platforms.reddit !== false;
 
       updateProviderUI();
+
+      // Load contexts
+      contexts = settings.contexts || [];
+      renderContexts();
     });
   }
 
@@ -148,7 +143,7 @@
       deepseekModel: getModelValue(deepseekModelSelect, deepseekModelCustom, 'deepseek-chat'),
       qwenModel: getModelValue(qwenModelSelect, qwenModelCustom, 'qwen-plus'),
       backendToken: backendTokenInput.value,
-      personalization: personalizationInput.value.trim(),
+      contexts: contexts,
       defaultTone: defaultToneSelect.value,
       platforms: {
         linkedin: document.getElementById('platform-linkedin').checked,
@@ -214,6 +209,176 @@
       });
     }
   });
+
+  // ── Context management ──
+  var contexts = [];
+  var editingContextId = null;
+  var contextList = document.getElementById('contextList');
+  var contextEditor = document.getElementById('contextEditor');
+  var addContextBtn = document.getElementById('addContextBtn');
+  var contextName = document.getElementById('contextName');
+  var contextBody = document.getElementById('contextBody');
+  var contextIsDefault = document.getElementById('contextIsDefault');
+  var wordCountEl = document.getElementById('wordCount');
+  var saveContextBtn = document.getElementById('saveContextBtn');
+  var cancelContextBtn = document.getElementById('cancelContextBtn');
+
+  function getWordCount(text) {
+    var trimmed = text.trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).length;
+  }
+
+  contextBody.addEventListener('input', function () {
+    var words = getWordCount(contextBody.value);
+    wordCountEl.textContent = words;
+    wordCountEl.style.color = words > 500 ? '#ef4444' : '#94a3b8';
+    contextBody.style.borderColor = '';
+  });
+
+  contextName.addEventListener('input', function () {
+    contextName.style.borderColor = '';
+  });
+
+  function renderContexts() {
+    contextList.innerHTML = '';
+    if (contexts.length === 0) {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'color:#94a3b8;font-size:11px;padding:4px 0;';
+      empty.textContent = 'No contexts added yet.';
+      contextList.appendChild(empty);
+      return;
+    }
+
+    contexts.forEach(function (ctx) {
+      var item = document.createElement('div');
+      item.className = 'ctx-item';
+
+      var info = document.createElement('div');
+      info.className = 'ctx-info';
+
+      var nameEl = document.createElement('div');
+      nameEl.className = 'ctx-name';
+      nameEl.textContent = ctx.name;
+      if (ctx.isDefault) {
+        var badge = document.createElement('span');
+        badge.className = 'ctx-badge';
+        badge.textContent = 'DEFAULT';
+        nameEl.appendChild(badge);
+      }
+      info.appendChild(nameEl);
+
+      var preview = document.createElement('div');
+      preview.className = 'ctx-preview';
+      preview.textContent = ctx.body.substring(0, 60) + (ctx.body.length > 60 ? '...' : '');
+      info.appendChild(preview);
+
+      item.appendChild(info);
+
+      var editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'ctx-btn ctx-btn-edit';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', function () { openContextEditor(ctx.id); });
+      item.appendChild(editBtn);
+
+      var delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'ctx-btn ctx-btn-del';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', function () { deleteContext(ctx.id); });
+      item.appendChild(delBtn);
+
+      contextList.appendChild(item);
+    });
+  }
+
+  function openContextEditor(id) {
+    editingContextId = id || null;
+    if (id) {
+      var ctx = contexts.find(function (c) { return c.id === id; });
+      if (ctx) {
+        contextName.value = ctx.name;
+        contextBody.value = ctx.body;
+        contextIsDefault.checked = ctx.isDefault;
+      }
+    } else {
+      contextName.value = '';
+      contextBody.value = '';
+      contextIsDefault.checked = contexts.length === 0;
+    }
+    wordCountEl.textContent = getWordCount(contextBody.value);
+    contextEditor.classList.remove('hidden');
+    addContextBtn.classList.add('hidden');
+    contextName.focus();
+  }
+
+  function closeContextEditor() {
+    editingContextId = null;
+    contextEditor.classList.add('hidden');
+    addContextBtn.classList.remove('hidden');
+  }
+
+  function saveContextToSettings() {
+    // Persist contexts into settings so background.js and content.js can read them
+    chrome.runtime.sendMessage({ type: 'saveSettings', data: { contexts: contexts } }, function () {});
+  }
+
+  addContextBtn.addEventListener('click', function () { openContextEditor(null); });
+  cancelContextBtn.addEventListener('click', closeContextEditor);
+
+  saveContextBtn.addEventListener('click', function () {
+    var name = contextName.value.trim();
+    var body = contextBody.value.trim();
+    var words = getWordCount(body);
+
+    if (!name) { contextName.style.borderColor = '#ef4444'; return; }
+    if (!body) { contextBody.style.borderColor = '#ef4444'; return; }
+    if (words > 500) { wordCountEl.style.color = '#ef4444'; return; }
+
+    var isDefault = contextIsDefault.checked;
+    if (isDefault) {
+      contexts.forEach(function (c) { c.isDefault = false; });
+    }
+
+    if (editingContextId) {
+      var ctx = contexts.find(function (c) { return c.id === editingContextId; });
+      if (ctx) {
+        ctx.name = name;
+        ctx.body = body;
+        ctx.isDefault = isDefault;
+      }
+    } else {
+      var newCtx = {
+        id: 'ctx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        name: name,
+        body: body,
+        isDefault: isDefault || contexts.length === 0
+      };
+      contexts.push(newCtx);
+    }
+
+    saveContextToSettings();
+    renderContexts();
+    closeContextEditor();
+  });
+
+  function deleteContext(id) {
+    var ctx = contexts.find(function (c) { return c.id === id; });
+    if (!ctx) return;
+    if (!confirm('Delete context "' + ctx.name + '"?')) return;
+
+    var wasDefault = ctx.isDefault;
+    contexts = contexts.filter(function (c) { return c.id !== id; });
+
+    // Transfer default to first remaining
+    if (wasDefault && contexts.length > 0) {
+      contexts[0].isDefault = true;
+    }
+
+    saveContextToSettings();
+    renderContexts();
+  }
 
   // ── Initialize ──
   loadSettings();
