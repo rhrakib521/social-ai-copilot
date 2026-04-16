@@ -124,6 +124,10 @@
       document.getElementById('platform-x').checked = platforms.x !== false;
       document.getElementById('platform-reddit').checked = platforms.reddit !== false;
 
+      // Load automation settings
+      document.getElementById('autoInterval').value = settings.autoInterval || 60;
+      document.getElementById('autoStopLimit').value = settings.autoStopLimit || 0;
+
       updateProviderUI();
 
       // Load contexts
@@ -145,6 +149,8 @@
       backendToken: backendTokenInput.value,
       contexts: contexts,
       defaultTone: defaultToneSelect.value,
+      autoInterval: parseInt(document.getElementById('autoInterval').value, 10) || 60,
+      autoStopLimit: parseInt(document.getElementById('autoStopLimit').value, 10) || 0,
       platforms: {
         linkedin: document.getElementById('platform-linkedin').checked,
         facebook: document.getElementById('platform-facebook').checked,
