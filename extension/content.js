@@ -91,7 +91,11 @@
         '.msg-s-message-listevent'
       ],
       authorSelector: '.update-components-actor__title span[dir="ltr"], .comments-post-meta__actor span[dir="ltr"]',
-      personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.'
+      personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.',
+      postSelector: '.feed-shared-update-v2, .feed-shared-celebration-v2',
+      commentButtonSelector: 'button[aria-label*="Comment"], button[aria-label*="comment"]',
+      replyFieldSelector: '.ql-editor[contenteditable="true"]',
+      submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button'
     },
     facebook: {
       editableFields: [
@@ -105,7 +109,11 @@
         '[aria-label*="Comment"]'
       ],
       authorSelector: 'a[role="link"] span a span, h4 a span',
-      personality: 'You are writing for Facebook. The tone should be friendly, conversational, and engaging. Content should feel natural and encourage interaction.'
+      personality: 'You are writing for Facebook. The tone should be friendly, conversational, and engaging. Content should feel natural and encourage interaction.',
+      postSelector: 'div[data-pagelet] [role="article"]',
+      commentButtonSelector: '[aria-label*="Comment"][role="button"]',
+      replyFieldSelector: '[contenteditable="true"][role="textbox"]',
+      submitButtonSelector: '[aria-label*="Comment"][role="button"]:not([aria-label*="Comment for"]), [aria-label*="Post"][role="button"]'
     },
     x: {
       editableFields: [
@@ -120,7 +128,11 @@
         'article[data-testid="tweet"]'
       ],
       authorSelector: '[data-testid="User-Name"] a span',
-      personality: 'You are writing for X (Twitter). Be concise, punchy, and impactful. Respect the character-limited culture even when writing longer posts.'
+      personality: 'You are writing for X (Twitter). Be concise, punchy, and impactful. Respect the character-limited culture even when writing longer posts.',
+      postSelector: 'article[data-testid="tweet"]',
+      commentButtonSelector: '[data-testid="reply"]',
+      replyFieldSelector: '[data-testid="tweetTextarea_0"], .public-DraftEditor-content[contenteditable="true"]',
+      submitButtonSelector: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"]'
     },
     reddit: {
       editableFields: [
@@ -137,7 +149,11 @@
         '.Comment'
       ],
       authorSelector: '.author, a[data-testid="post_author_link"], [data-testid="comment_author_link"]',
-      personality: 'You are writing for Reddit. Be authentic, knowledgeable, and community-aware. Match the subreddit culture. Avoid overly marketing language. Use proper formatting with Markdown.'
+      personality: 'You are writing for Reddit. Be authentic, knowledgeable, and community-aware. Match the subreddit culture. Avoid overly marketing language. Use proper formatting with Markdown.',
+      postSelector: '[data-testid="post-container"], .Post, .thing.link',
+      commentButtonSelector: 'button[onclick*="comment"], [data-testid="comment-button"]',
+      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"]',
+      submitButtonSelector: 'button[type="submit"]'
     }
   };
 
