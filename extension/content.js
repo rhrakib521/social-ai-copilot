@@ -814,6 +814,8 @@
       postsScanned: 0
     },
     processedPosts: new Set(),
+    _confirmed: false,
+    reviewMode: true,
     panelEl: null,
     btnEl: null,
     timerInterval: null,
@@ -825,12 +827,17 @@
     // ── Settings ──
     loadConfig: function () {
       var settings = savedSettings || {};
-      this.config.interval = Math.max(30, Math.min(300, settings.autoInterval || 60));
+      this.config.interval = Math.max(120, Math.min(300, settings.autoInterval || 60));
       this.config.stopLimit = Math.max(0, settings.autoStopLimit || 0);
     },
 
     // ── Core Loop ──
     start: function () {
+      if (!this._confirmed) {
+        var msg = 'Automated commenting may violate platform Terms of Service and could result in account suspension or permanent ban.\n\nAI-generated comments may need to be disclosed under FTC and EU regulations.\n\nContinue?';
+        if (!confirm(msg)) return;
+        this._confirmed = true;
+      }
       this.loadConfig();
       this.state = 'running';
       this.stats.commentsMade = 0;
@@ -927,6 +934,12 @@
         setTimeout(function () {
           if (self.state !== 'running') return;
 
+          if (!post.isConnected) {
+            console.log('[SAIC-Auto] Post element was removed from DOM, skipping');
+            self.scheduleNextCycle(3000);
+            return;
+          }
+
           var context = self.extractPostContext(post);
 
           self.generateComment(context, function (text) {
@@ -1006,9 +1019,12 @@
     },
 
     getPostFingerprint: function (el) {
-      var text = (el.innerText || '').substring(0, 200).trim();
-      var rect = el.getBoundingClientRect();
-      return text.length.toString(36) + '_' + Math.round(rect.top).toString(36) + '_' + el.tagName + '_' + el.className.substring(0, 30);
+      var text = (el.innerText || '').substring(0, 300).trim();
+      var hash = 0;
+      for (var i = 0; i < text.length; i++) {
+        hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+      }
+      return Math.abs(hash).toString(36) + '_' + el.tagName;
     },
 
     isAlreadyCommented: function (postEl) {
@@ -1091,6 +1107,16 @@
     typeAndSubmit: function (postEl, text, callback) {
       var self = this;
       if (self.state !== 'running') { callback(false); return; }
+
+      if (self.reviewMode) {
+        // Review mode: show comment in a dialog for user approval
+        var approved = confirm('AI Comment (click OK to post, Cancel to skip):\n\n' + text);
+        if (!approved) {
+          console.log('[SAIC-Auto] Comment skipped by user (review mode)');
+          callback(false);
+          return;
+        }
+      }
 
       self.clickCommentButton(postEl, function (replyField) {
         if (!replyField) {
@@ -1328,11 +1354,15 @@
           '<div class="saic-auto-config">' +
             '<div class="saic-auto-field">' +
               '<label>Interval (sec)</label>' +
-              '<input type="number" class="saic-auto-cfg-interval" min="30" max="300" value="60">' +
+              '<input type="number" class="saic-auto-cfg-interval" min="120" max="300" value="60">' +
             '</div>' +
             '<div class="saic-auto-field">' +
               '<label>Stop after (0=off)</label>' +
               '<input type="number" class="saic-auto-cfg-limit" min="0" max="500" value="0">' +
+            '</div>' +
+            '<div class="saic-auto-field">' +
+              '<label>Review before submit</label>' +
+              '<input type="checkbox" class="saic-auto-cfg-review" checked style="width:auto;">' +
             '</div>' +
             '<div class="saic-auto-platform">Platform: ' + (platformName || 'unknown') + '</div>' +
           '</div>' +
@@ -1351,8 +1381,9 @@
 
       startBtn.addEventListener('click', function () {
         if (self.state === 'idle' || self.state === 'stopped') {
-          self.config.interval = Math.max(30, Math.min(300, parseInt(self.panelEl.querySelector('.saic-auto-cfg-interval').value, 10) || 60));
+          self.config.interval = Math.max(120, Math.min(300, parseInt(self.panelEl.querySelector('.saic-auto-cfg-interval').value, 10) || 60));
           self.config.stopLimit = Math.max(0, parseInt(self.panelEl.querySelector('.saic-auto-cfg-limit').value, 10) || 0);
+          self.reviewMode = self.panelEl.querySelector('.saic-auto-cfg-review').checked;
           self.start();
         } else if (self.state === 'paused') {
           self.resume();
@@ -1393,8 +1424,13 @@
         isDragging = true;
         startX = e.clientX;
         startY = e.clientY;
-        startLeft = self.panelEl.offsetLeft;
-        startTop = self.panelEl.offsetTop;
+        var rect = self.panelEl.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+        self.panelEl.style.left = startLeft + 'px';
+        self.panelEl.style.top = startTop + 'px';
+        self.panelEl.style.right = 'auto';
+        self.panelEl.style.bottom = 'auto';
         header.style.cursor = 'grabbing';
         e.preventDefault();
       });
