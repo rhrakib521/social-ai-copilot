@@ -277,14 +277,15 @@ var TONE_GUIDES = {
 var TASK_INSTRUCTIONS = {
   reply: 'Write a reply to the post or comment below. 3-4 sentences. Read the original content carefully and respond directly to what was said — do not ignore or skim over the key points.',
   comment: 'Write a comment on the post below. 3-4 sentences. Read the post content thoroughly, then add a meaningful perspective or real-world example that connects to what the author actually said.',
-  quick_reply: 'Write a short, natural 2-3 line comment on the post. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write.',
+  quick_reply: 'Write a short, natural 2-3 line comment on the post. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. If the author name or handle is provided, naturally address or reference them by their first name in the comment. Make it feel personal and genuine.',
   post: 'Write a new original post based on the topic or draft provided in the context. Make it structured and engaging.',
   rewrite: 'Rewrite and improve the text provided in the context below. Improve clarity without changing the core meaning.',
   hook: 'Write an attention-grabbing hook or opening line for a post on the topic provided. Make it stop-the-scroll worthy.',
   shorten: 'Make the text shorter and more concise while keeping the core message intact.',
   expand: 'Expand on the ideas in the text provided in the context below. Add more detail and depth.',
   grammar: 'Fix any grammar, spelling, punctuation, or phrasing errors in the text. Return only the corrected version.',
-  summarize: 'Summarize the post or text provided in the context below concisely.'
+  summarize: 'Summarize the post or text provided in the context below concisely.',
+  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. If the author name or handle is provided, naturally address or reference them by their first name in the comment (e.g. "Great insight, [Name]!" or "Thanks for sharing this, [Name]"). Make it feel personal and genuine.'
 };
 
 function buildPrompt(platform, task, tone, context, personality, contextInfo) {
@@ -331,6 +332,12 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo) {
   if (context.author) {
     userParts.push('Author: ' + context.author);
   }
+  if (context.authorHandle) {
+    userParts.push('Author handle/username: @' + context.authorHandle);
+  }
+  if (context.authorProfileUrl) {
+    userParts.push('Author profile: ' + context.authorProfileUrl);
+  }
   if (context.nearbyComments && context.nearbyComments.length > 0) {
     var commentLines = context.nearbyComments.map(function (c, i) {
       return (i + 1) + '. ' + c;
@@ -350,6 +357,7 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo) {
   if (task === 'hook') maxTokens = 80;
   if (task === 'grammar') maxTokens = 400;
   if (task === 'rewrite') maxTokens = 300;
+  if (task === 'auto_classify_comment') maxTokens = 150;
 
   return {
     messages: [
@@ -376,6 +384,15 @@ var DEFAULT_SETTINGS = {
   contexts: [],
   autoInterval: 60,
   autoStopLimit: 0,
+  autoSubmit: true,
+  contentFilter: 'business',
+  engagementThresholds: {
+    linkedin:  { minReactions: 50, minComments: 10 },
+    facebook:  { minReactions: 30, minComments: 5 },
+    x:         { minLikes: 100, minRetweets: 20 },
+    reddit:    { minUpvotes: 50, minComments: 10 }
+  },
+  priorityTargets: [],
   platforms: { linkedin: true, facebook: true, x: true, reddit: true }
 };
 
