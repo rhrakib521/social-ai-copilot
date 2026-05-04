@@ -11,6 +11,7 @@
   var platformName = null;
   var activeField = null;
   var currentPopoverEl = null;
+  var currentTriggerWrapper = null;
   var savedSettings = null;
   var lastGeneratedText = '';
   var lastGeneratedAction = '';
@@ -61,6 +62,213 @@
 
   window.__saic_insertTextAtCursor = insertTextAtCursor;
 
+  // ── Utility functions for automation ──
+
+  function randomBetween(min, max) {
+    return min + Math.random() * (max - min);
+  }
+
+  function jitter(baseMs, pct) {
+    pct = pct || 0.2;
+    return Math.round(baseMs * (1 - pct + Math.random() * pct * 2));
+  }
+
+  function parseCount(text) {
+    if (!text) return 0;
+    text = (text + '').replace(/,/g, '').replace(/\s+/g, '').trim();
+    var m = text.match(/([\d.]+)\s*(K|M|B)?/i);
+    if (!m) return 0;
+    var num = parseFloat(m[1]);
+    if (isNaN(num)) return 0;
+    var suffix = (m[2] || '').toUpperCase();
+    if (suffix === 'K') return Math.round(num * 1000);
+    if (suffix === 'M') return Math.round(num * 1000000);
+    if (suffix === 'B') return Math.round(num * 1000000000);
+    return Math.round(num);
+  }
+
+  function extractCountFromEl(el) {
+    if (!el) return 0;
+    var label = el.getAttribute('aria-label') || '';
+    var m = label.match(/([\d,.]+\s*[KMB]?)\s*(reaction|like|comment|repost|retweet|share|upvote|view)/i);
+    if (m) return parseCount(m[1]);
+    return parseCount(el.innerText || el.textContent || '');
+  }
+
+  function getPostLink(postEl, platform) {
+    var href = '';
+    if (platform === 'linkedin') {
+      // Try multiple selectors for LinkedIn post links
+      var link = postEl.querySelector('a[href*="/posts/"], a[href*="/feed/update/"], a[href*="/activity/"], a[href*="urn:li:activity"]');
+      if (link) href = link.getAttribute('href') || '';
+      if (!href) {
+        var timeEl = postEl.querySelector('time');
+        if (timeEl) {
+          // Time element may be wrapped in an anchor
+          var timeLink = timeEl.closest('a');
+          if (timeLink) href = timeLink.getAttribute('href') || '';
+          // Or the parent of time may be an anchor
+          if (!href && timeEl.parentElement && timeEl.parentElement.tagName === 'A') {
+            href = timeEl.parentElement.getAttribute('href') || '';
+          }
+        }
+      }
+      // Try data attributes on the post element itself
+      if (!href) {
+        var activityUrn = postEl.getAttribute('data-urn') || postEl.getAttribute('data-activity-urn') || '';
+        if (activityUrn) href = '/feed/update/' + activityUrn;
+      }
+    } else if (platform === 'facebook') {
+      var link2 = postEl.querySelector('a[href*="/posts/"], a[href*="/permalink"], a[href*="story_fbid"], a[href*="/videos/"]');
+      if (link2) href = link2.getAttribute('href') || '';
+      if (!href) {
+        // Try timestamp link
+        var timestamp = postEl.querySelector('a[href*="story_fbid"], a[href*="/posts/"]');
+        if (timestamp) href = timestamp.getAttribute('href') || '';
+      }
+      if (!href) {
+        // Try the abbr time element's parent anchor
+        var abbr = postEl.querySelector('abbr, time');
+        if (abbr) {
+          var abbrLink = abbr.closest('a');
+          if (abbrLink) href = abbrLink.getAttribute('href') || '';
+        }
+      }
+    } else if (platform === 'x') {
+      // X tweet links — look for /status/ pattern
+      var link3 = postEl.querySelector('a[href*="/status/"]');
+      if (link3) href = link3.getAttribute('href') || '';
+      // If inside a tweet, try the time link which always points to the tweet
+      if (!href) {
+        var xTime = postEl.querySelector('time');
+        if (xTime) {
+          var xTimeLink = xTime.closest('a');
+          if (xTimeLink) href = xTimeLink.getAttribute('href') || '';
+        }
+      }
+    } else if (platform === 'reddit') {
+      var link4 = postEl.querySelector('a[href*="/comments/"], a.comments, a[data-testid="post-comment-link"], a.title, a[data-click-id="comments"]');
+      if (link4) href = link4.getAttribute('href') || '';
+      if (!href) {
+        // Try the post title link
+        var titleLink = postEl.querySelector('a.title, a[data-click-id="body"]');
+        if (titleLink) href = titleLink.getAttribute('href') || '';
+      }
+      if (href && href.charAt(0) === '/') href = 'https://www.reddit.com' + href;
+    }
+    if (href && href.charAt(0) === '/') href = window.location.origin + href;
+    return href || window.location.href;
+  }
+
+  function getAuthorInfo(postEl, platform) {
+    var info = { name: '', handle: '', profileUrl: '' };
+    if (!postEl || !platform) return info;
+    if (platform === 'linkedin') {
+      var authorEl = postEl.querySelector('.update-components-actor__title span[dir="ltr"], .update-components-actor__name, span[class*="actor__title"]');
+      if (authorEl) info.name = (authorEl.innerText || authorEl.textContent || '').trim();
+      var profileEl = postEl.querySelector('.update-components-actor__image a, .update-components-actor__title a, a[class*="actor"][href*="/in/"]');
+      if (profileEl) info.profileUrl = profileEl.getAttribute('href') || '';
+      if (info.profileUrl && info.profileUrl.charAt(0) === '/') info.profileUrl = window.location.origin + info.profileUrl;
+    } else if (platform === 'facebook') {
+      var fbAuthor = postEl.querySelector('a[role="link"] span a span, h4 a span, strong span a, a[aria-label][href]');
+      if (fbAuthor) info.name = (fbAuthor.innerText || fbAuthor.textContent || '').trim();
+      var fbProfile = postEl.querySelector('h4 a, strong span a, a[href*="/profile.php"], a[href*="facebook.com/"][aria-label]');
+      if (fbProfile) info.profileUrl = fbProfile.getAttribute('href') || '';
+    } else if (platform === 'x') {
+      var xHandle = postEl.querySelector('[data-testid="User-Name"] a');
+      if (xHandle) {
+        info.handle = (xHandle.getAttribute('href') || '').replace(/^\//, '');
+        info.profileUrl = window.location.origin + '/' + info.handle;
+      }
+      var xName = postEl.querySelector('[data-testid="User-Name"] a span span, [data-testid="name"]');
+      if (xName) info.name = (xName.innerText || xName.textContent || '').trim();
+    } else if (platform === 'reddit') {
+      var rdAuthor = postEl.querySelector('.author, a[data-testid="post_author_link"], [data-testid="comment_author_link"]');
+      if (rdAuthor) {
+        info.name = (rdAuthor.innerText || rdAuthor.textContent || '').trim().replace(/^u\//, '');
+        info.handle = info.name;
+        info.profileUrl = 'https://www.reddit.com/user/' + info.handle;
+      }
+    }
+    return info;
+  }
+
+  function humanMouseMove(targetEl, callback) {
+    var rect = targetEl.getBoundingClientRect();
+    var destX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+    var destY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+    var startX = window.mouseX || randomBetween(100, window.innerWidth - 100);
+    var startY = window.mouseY || randomBetween(100, window.innerHeight - 100);
+
+    window.mouseX = destX;
+    window.mouseY = destY;
+
+    var numPoints = 3 + Math.floor(Math.random() * 3);
+    var points = [{ x: startX, y: startY }];
+
+    for (var i = 1; i <= numPoints; i++) {
+      var t = i / (numPoints + 1);
+      points.push({
+        x: startX + (destX - startX) * t + randomBetween(-80, 80),
+        y: startY + (destY - startY) * t + randomBetween(-60, 60)
+      });
+    }
+    points.push({ x: destX, y: destY });
+
+    var totalDuration = randomBetween(400, 1200);
+    var startTime = null;
+    var pauseIndex = 1 + Math.floor(Math.random() * (points.length - 2));
+    var paused = false;
+    var pauseDuration = randomBetween(50, 150);
+
+    function dispatchMouse(x, y) {
+      var evt = new MouseEvent('mousemove', {
+        clientX: x, clientY: y, bubbles: true, cancelable: true
+      });
+      document.dispatchEvent(evt);
+    }
+
+    function animate(timestamp) {
+      if (!startTime) startTime = timestamp;
+      var elapsed = timestamp - startTime;
+      var progress = Math.min(elapsed / totalDuration, 1);
+
+      var eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      var totalSegments = points.length - 1;
+      var segFloat = eased * totalSegments;
+      var segIndex = Math.min(Math.floor(segFloat), totalSegments - 1);
+      var segProgress = segFloat - segIndex;
+
+      var p0 = points[segIndex];
+      var p1 = points[segIndex + 1];
+      var x = p0.x + (p1.x - p0.x) * segProgress;
+      var y = p0.y + (p1.y - p0.y) * segProgress;
+
+      dispatchMouse(x, y);
+
+      if (progress >= 1) {
+        dispatchMouse(destX, destY);
+        if (callback) callback();
+        return;
+      }
+
+      if (!paused && segIndex >= pauseIndex && segProgress > 0.5) {
+        paused = true;
+        setTimeout(function () {
+          requestAnimationFrame(animate);
+        }, pauseDuration);
+        return;
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    requestAnimationFrame(animate);
+  }
+
   // ── Platform detection ──
   function detectPlatform(url) {
     if (!url) return null;
@@ -95,7 +303,10 @@
       postSelector: '.feed-shared-update-v2, .feed-shared-celebration-v2',
       commentButtonSelector: 'button[aria-label*="Comment"], button[aria-label*="comment"]',
       replyFieldSelector: '.ql-editor[contenteditable="true"]',
-      submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button'
+      submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button',
+      reactionCountSelector: '.social-details-social-counts__reactions-count, button[aria-label*="react" i] span, span.social-details-social-counts__reactions-count',
+      commentCountSelector: '.social-details-social-counts__comments, button[aria-label*="comment" i] span',
+      authorLinkSelector: '.update-components-actor__image a, .update-components-actor__title a'
     },
     facebook: {
       editableFields: [
@@ -113,7 +324,10 @@
       postSelector: 'div[data-pagelet] [role="article"]',
       commentButtonSelector: '[aria-label*="Comment"][role="button"]',
       replyFieldSelector: '[contenteditable="true"][role="textbox"]',
-      submitButtonSelector: '[aria-label*="Comment"][role="button"]:not([aria-label*="Comment for"]), [aria-label*="Post"][role="button"]'
+      submitButtonSelector: '[aria-label*="Comment"][role="button"]:not([aria-label*="Comment for"]), [aria-label*="Post"][role="button"]',
+      reactionCountSelector: '[aria-label*="react" i], [aria-label*="Like" i] span',
+      commentCountSelector: '[aria-label*="Comment" i][role="button"]',
+      groupLinkSelector: 'a[href*="/groups/"]'
     },
     x: {
       editableFields: [
@@ -132,7 +346,10 @@
       postSelector: 'article[data-testid="tweet"]',
       commentButtonSelector: '[data-testid="reply"]',
       replyFieldSelector: '[data-testid="tweetTextarea_0"], .public-DraftEditor-content[contenteditable="true"]',
-      submitButtonSelector: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"]'
+      submitButtonSelector: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"]',
+      likeCountSelector: '[data-testid="like"], [data-testid="unlike"]',
+      retweetCountSelector: '[data-testid="retweet"], [data-testid="unretweet"]',
+      handleSelector: '[data-testid="User-Name"] a'
     },
     reddit: {
       editableFields: [
@@ -153,7 +370,10 @@
       postSelector: '[data-testid="post-container"], .Post, .thing.link',
       commentButtonSelector: 'button[onclick*="comment"], [data-testid="comment-button"]',
       replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"]',
-      submitButtonSelector: 'button[type="submit"]'
+      submitButtonSelector: 'button[type="submit"]',
+      scoreSelector: '.score, [aria-label="upvote"] + div[title], .score.unvoted',
+      commentLinkSelector: 'a.comments, [data-testid="post-comment-link"]',
+      subredditSelector: 'a[href*="/r/"], a[data-click-id="subreddit"]'
     }
   };
 
@@ -245,6 +465,13 @@
     return null;
   }
 
+  function removeExistingTrigger() {
+    if (currentTriggerWrapper && currentTriggerWrapper.parentNode) {
+      currentTriggerWrapper.parentNode.removeChild(currentTriggerWrapper);
+    }
+    currentTriggerWrapper = null;
+  }
+
   function hidePopover() {
     if (currentPopoverEl) {
       // Use remove() to trigger drag listener cleanup from makeDraggable
@@ -255,6 +482,41 @@
       }
     }
     currentPopoverEl = null;
+  }
+
+  function createTriggerForField(field) {
+    removeExistingTrigger();
+    hidePopover();
+
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'saic-trigger';
+    trigger.setAttribute('aria-label', 'Open AI Copilot');
+    trigger.setAttribute('title', 'AI Copilot (Ctrl+Shift+A)');
+    trigger.textContent = 'AI';
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'saic-trigger-wrapper';
+    wrapper.appendChild(trigger);
+
+    field.parentNode.insertBefore(wrapper, field.nextSibling);
+
+    var rect = field.getBoundingClientRect();
+    wrapper.style.position = 'fixed';
+    wrapper.style.left = (rect.right - 44) + 'px';
+    wrapper.style.top = (rect.bottom + 4) + 'px';
+    wrapper.style.zIndex = '999998';
+
+    currentTriggerWrapper = wrapper;
+    activeField = field;
+
+    trigger.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openPopover(field);
+    });
+
+    return { trigger: trigger, wrapper: wrapper, field: field };
   }
 
   // ── Drag functionality ──
@@ -304,8 +566,18 @@
     };
   }
 
+  function repositionTrigger() {
+    if (!currentTriggerWrapper || !currentTriggerWrapper.__saic_field) return;
+    var field = currentTriggerWrapper.__saic_field;
+    if (!field.isConnected) { removeExistingTrigger(); return; }
+    var rect = field.getBoundingClientRect();
+    currentTriggerWrapper.style.left = (rect.right - 44) + 'px';
+    currentTriggerWrapper.style.top = (rect.bottom + 4) + 'px';
+  }
+
   function openPopover(field) {
     hidePopover();
+    removeExistingTrigger();
     activeField = field;
 
     var popover = document.createElement('div');
@@ -732,7 +1004,12 @@
   // ── Click outside to close ──
   document.addEventListener('click', function (e) {
     if (currentPopoverEl && !currentPopoverEl.contains(e.target)) {
-      hidePopover();
+      var isTrigger = e.target.classList && e.target.classList.contains('saic-trigger');
+      if (!isTrigger) hidePopover();
+    }
+    // Remove trigger when clicking outside trigger and popover
+    if (currentTriggerWrapper && !currentTriggerWrapper.contains(e.target) && (!currentPopoverEl || !currentPopoverEl.contains(e.target))) {
+      removeExistingTrigger();
     }
     // Close any open More menus when clicking outside
     var openMenus = document.querySelectorAll('.saic-more-menu');
@@ -748,6 +1025,10 @@
     var field = findEditableField(e.target);
     if (field) {
       activeField = field;
+      if (!currentTriggerWrapper || currentTriggerWrapper.__saic_field !== field) {
+        var trig = createTriggerForField(field);
+        if (trig) trig.wrapper.__saic_field = field;
+      }
     }
   });
 
@@ -780,6 +1061,10 @@
       AutomationEngine.init();
     });
 
+    // Reposition trigger button on scroll/resize
+    window.addEventListener('scroll', repositionTrigger, true);
+    window.addEventListener('resize', repositionTrigger);
+
     // Keep settings fresh on changes
     chrome.storage.onChanged.addListener(function (changes) {
       if (changes.socialAiCopilot_settings) {
@@ -802,20 +1087,27 @@
   // ── Automation Engine ──
   // ══════════════════════════════════════════════════
 
+
   var AutomationEngine = {
-    state: 'idle', // idle | running | paused | stopped
+    state: 'idle',
     config: {
       interval: 60,
-      stopLimit: 0
+      minInterval: 30,
+      maxInterval: 300,
+      stopLimit: 0,
+      autoSubmit: true,
+      contentFilter: 'business',
+      engagementThresholds: {
+        linkedin:  { minReactions: 50, minComments: 10 },
+        facebook:  { minReactions: 30, minComments: 5 },
+        x:         { minLikes: 100, minRetweets: 20 },
+        reddit:    { minUpvotes: 50, minComments: 10 }
+      },
+      priorityTargets: []
     },
-    stats: {
-      commentsMade: 0,
-      startTime: null,
-      postsScanned: 0
-    },
+    stats: { commentsMade: 0, startTime: null, postsScanned: 0, postsSkipped: 0 },
     processedPosts: new Set(),
     _confirmed: false,
-    reviewMode: true,
     panelEl: null,
     btnEl: null,
     timerInterval: null,
@@ -823,31 +1115,44 @@
     countdownInterval: null,
     nextActionTime: null,
     _abortScroll: false,
+    logEntries: [],
+    commentHistory: [],
 
-    // ── Settings ──
     loadConfig: function () {
       var settings = savedSettings || {};
-      this.config.interval = Math.max(120, Math.min(300, settings.autoInterval || 60));
+      this.config.interval = Math.max(30, Math.min(300, settings.autoInterval || 60));
       this.config.stopLimit = Math.max(0, settings.autoStopLimit || 0);
+      this.config.autoSubmit = settings.autoSubmit !== false;
+      this.config.contentFilter = settings.contentFilter || 'business';
+      if (settings.engagementThresholds) {
+        var t = settings.engagementThresholds;
+        this.config.engagementThresholds = {
+          linkedin:  { minReactions: (t.linkedin && t.linkedin.minReactions) || 50, minComments: (t.linkedin && t.linkedin.minComments) || 10 },
+          facebook:  { minReactions: (t.facebook && t.facebook.minReactions) || 30, minComments: (t.facebook && t.facebook.minComments) || 5 },
+          x:         { minLikes: (t.x && t.x.minLikes) || 100, minRetweets: (t.x && t.x.minRetweets) || 20 },
+          reddit:    { minUpvotes: (t.reddit && t.reddit.minUpvotes) || 50, minComments: (t.reddit && t.reddit.minComments) || 10 }
+        };
+      }
+      if (settings.priorityTargets && settings.priorityTargets.length) {
+        this.config.priorityTargets = settings.priorityTargets;
+      }
     },
 
-    // ── Core Loop ──
     start: function () {
       if (!this._confirmed) {
-        var msg = 'Automated commenting may violate platform Terms of Service and could result in account suspension or permanent ban.\n\nAI-generated comments may need to be disclosed under FTC and EU regulations.\n\nContinue?';
-        if (!confirm(msg)) return;
+        if (!confirm('Automated commenting may violate platform Terms of Service and could result in account suspension or permanent ban.\n\nAI-generated comments may need to be disclosed under FTC and EU regulations.\n\nContinue?')) return;
         this._confirmed = true;
       }
       clearTimeout(this.nextActionTimeout);
       clearInterval(this.countdownInterval);
       this.loadConfig();
       this.state = 'running';
-      this.stats.commentsMade = 0;
-      this.stats.startTime = Date.now();
-      this.stats.postsScanned = 0;
+      this.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
       this.processedPosts = new Set();
       this._abortScroll = false;
-      console.log('[SAIC-Auto] Started — interval:', this.config.interval + 's, stop limit:', this.config.stopLimit || 'unlimited');
+      this.logEntries = [];
+      this.addLog('Started on ' + platformName + ' - interval: ' + this.config.interval + 's');
+      console.log('[SAIC-Auto] Started - interval:', this.config.interval + 's, auto:', this.config.autoSubmit);
       this.updateUI();
       this.runCycle();
     },
@@ -860,7 +1165,7 @@
       this.nextActionTimeout = null;
       this.countdownInterval = null;
       this.nextActionTime = null;
-      console.log('[SAIC-Auto] Stopped' + (reason ? ' — ' + reason : ''));
+      this.addLog('Stopped' + (reason ? ': ' + reason : ''));
       this.updateUI();
     },
 
@@ -872,8 +1177,7 @@
       clearInterval(this.countdownInterval);
       this.nextActionTimeout = null;
       this.countdownInterval = null;
-      this.nextActionTime = null;
-      console.log('[SAIC-Auto] Paused at ' + this.stats.commentsMade + ' comments');
+      this.addLog('Paused at ' + this.stats.commentsMade + ' comments');
       this.updateUI();
     },
 
@@ -881,7 +1185,7 @@
       if (this.state !== 'paused') return;
       this.state = 'running';
       this._abortScroll = false;
-      console.log('[SAIC-Auto] Resumed');
+      this.addLog('Resumed');
       this.updateUI();
       this.runCycle();
     },
@@ -889,161 +1193,315 @@
     runCycle: function () {
       var self = this;
       if (self.state !== 'running') return;
-
-      // Check stop limit
       if (self.config.stopLimit > 0 && self.stats.commentsMade >= self.config.stopLimit) {
-        self.stop('limit reached (' + self.config.stopLimit + ' comments)');
+        self.stop('limit reached (' + self.config.stopLimit + ')');
         return;
       }
-
-      // Find next post
-      var post = self.findNextPost();
-      if (!post) {
-        console.log('[SAIC-Auto] No uncommented post found, scrolling...');
+      var posts = self.findCandidatePosts();
+      if (posts.length === 0) {
+        self.addLog('No posts found, scrolling...');
         self.humanScroll(window.scrollY + window.innerHeight * (1 + Math.random() * 2), function () {
           if (self.state !== 'running') return;
           setTimeout(function () {
-            post = self.findNextPost();
-            if (!post) {
-              console.log('[SAIC-Auto] No posts found after scroll, retrying in 10s...');
+            posts = self.findCandidatePosts();
+            if (posts.length === 0) {
+              self.addLog('No posts after scroll, retry 10s');
               self.scheduleNextCycle(10000);
               return;
             }
-            self.processPost(post);
+            self.processBestPost(posts);
           }, 1500 + Math.random() * 1500);
         });
         return;
       }
-
-      self.processPost(post);
+      self.processBestPost(posts);
     },
 
-    processPost: function (post) {
+    findCandidatePosts: function () {
+      if (!platformConfig || !platformConfig.postSelector) return [];
+      var all = document.querySelectorAll(platformConfig.postSelector);
+      var candidates = [];
+      for (var i = 0; i < all.length; i++) {
+        if (!this.processedPosts.has(this.getPostFingerprint(all[i]))) candidates.push(all[i]);
+      }
+      return candidates;
+    },
+
+    processBestPost: function (posts) {
       var self = this;
       if (self.state !== 'running') return;
+      var bestPost = null, bestScore = -1, bestReason = '';
+      for (var i = 0; i < posts.length; i++) {
+        var post = posts[i];
+        if (self.isPriorityTarget(post)) { bestPost = post; bestReason = 'Priority target'; break; }
+        var engagement = self.getEngagementScore(post);
+        if (self.meetsEngagementThreshold(engagement) && engagement.total > bestScore) {
+          bestScore = engagement.total;
+          bestPost = post;
+          bestReason = 'Engagement: ' + engagement.reactions + ' reactions, ' + engagement.comments + ' comments';
+        }
+      }
+      if (!bestPost) {
+        self.stats.postsSkipped++;
+        self.addLog('All below threshold, scrolling...');
+        self.humanScroll(window.scrollY + window.innerHeight * (1 + Math.random() * 1.5), function () {
+          if (self.state !== 'running') return;
+          self.scheduleNextCycle(jitter(3000, 0.3));
+        });
+        return;
+      }
+      self.processPost(bestPost, bestReason);
+    },
 
+    processPost: function (post, reason) {
+      var self = this;
+      if (self.state !== 'running') return;
       var postId = self.getPostFingerprint(post);
       self.processedPosts.add(postId);
       self.stats.postsScanned++;
-
+      self.addLog(reason || 'Processing post');
       self.scrollToPost(post, function () {
         if (self.state !== 'running') return;
-
-        var readDelay = 3000 + Math.random() * 5000;
-        console.log('[SAIC-Auto] Reading post for ' + Math.round(readDelay / 1000) + 's...');
+        var readDelay = jitter(randomBetween(3000, 8000), 0.15);
         self.updateCountdown(readDelay, 'Reading...');
-
         setTimeout(function () {
           if (self.state !== 'running') return;
-
-          if (!post.isConnected) {
-            console.log('[SAIC-Auto] Post element was removed from DOM, skipping');
-            self.scheduleNextCycle(3000);
-            return;
-          }
-
+          if (!post.isConnected) { self.addLog('Post removed from DOM'); self.scheduleNextCycle(jitter(3000, 0.3)); return; }
           var context = self.extractPostContext(post);
-
-          self.generateComment(context, function (text) {
+          self.classifyAndComment(context, function (text) {
             if (self.state !== 'running') return;
             if (!text) {
-              console.log('[SAIC-Auto] Comment generation failed, skipping post');
-              self.scheduleNextCycle(5000);
+              self.stats.postsSkipped++;
+              self.addLog('Skipped: not business/startup related');
+              self.scheduleNextCycle(jitter(5000, 0.3));
               return;
             }
-
-            self.typeAndSubmit(post, text, function (success) {
-              if (success) {
-                self.stats.commentsMade++;
-                console.log('[SAIC-Auto] Comment #' + self.stats.commentsMade + ' posted: "' + text.substring(0, 60) + '..."');
-              } else {
-                console.log('[SAIC-Auto] Failed to submit comment, moving on');
-              }
-              self.updateUI();
-
-              var extraPause = (self.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0)
-                ? 5000 + Math.random() * 10000
-                : 0;
-              self.scheduleNextCycle(self.config.interval * 1000 + extraPause);
-            });
+            if (self.config.autoSubmit) {
+              self.submitCommentAuto(post, text, function (success) { self.afterComment(success, text, post); });
+            } else {
+              self.showReviewOverlay(post, text, function (approved) {
+                if (approved) { self.afterComment(true, text, post); }
+                else { self.addLog('Skipped by user'); self.scheduleNextCycle(jitter(5000, 0.3)); }
+              });
+            }
           });
         }, readDelay);
       });
     },
 
+    afterComment: function (success, text, postEl) {
+      var self = this;
+      if (success) {
+        self.stats.commentsMade++;
+        self.addLog('Commented: "' + (text || '').substring(0, 50) + '..."');
+      } else {
+        self.addLog('Failed to submit');
+      }
+      if (postEl) self.recordComment(postEl, text, success);
+      self.updateUI();
+      var extraPause = (self.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0) ? jitter(randomBetween(5000, 15000), 0.2) : 0;
+      self.scheduleNextCycle(jitter(self.config.interval * 1000, 0.2) + extraPause);
+    },
+
     scheduleNextCycle: function (delayMs) {
       var self = this;
       if (self.state !== 'running') return;
-
       console.log('[SAIC-Auto] Next in ' + Math.round(delayMs / 1000) + 's');
       self.updateCountdown(delayMs, 'Next in');
-
-      self.nextActionTimeout = setTimeout(function () {
-        if (self.state === 'running') {
-          self.runCycle();
-        }
-      }, delayMs);
+      self.nextActionTimeout = setTimeout(function () { if (self.state === 'running') self.runCycle(); }, delayMs);
     },
 
     updateCountdown: function (totalMs, prefix) {
       var self = this;
       clearInterval(self.countdownInterval);
       if (!self.panelEl) return;
-
       var timerEl = self.panelEl.querySelector('.saic-auto-timer');
       if (!timerEl) return;
-
       var remaining = totalMs;
       timerEl.textContent = prefix + ' ' + Math.ceil(remaining / 1000) + 's';
-
       self.countdownInterval = setInterval(function () {
         remaining -= 1000;
-        if (remaining <= 0) {
-          clearInterval(self.countdownInterval);
-          timerEl.textContent = 'Working...';
-          return;
-        }
+        if (remaining <= 0) { clearInterval(self.countdownInterval); timerEl.textContent = 'Working...'; return; }
         timerEl.textContent = prefix + ' ' + Math.ceil(remaining / 1000) + 's';
       }, 1000);
     },
 
-    // ── Post Detection ──
-    findNextPost: function () {
-      if (!platformConfig || !platformConfig.postSelector) return null;
-      var posts = document.querySelectorAll(platformConfig.postSelector);
-      for (var i = 0; i < posts.length; i++) {
-        var fp = this.getPostFingerprint(posts[i]);
-        if (!this.processedPosts.has(fp) && !this.isAlreadyCommented(posts[i])) {
-          return posts[i];
-        }
+    getEngagementScore: function (postEl) {
+      var result = { reactions: 0, comments: 0, total: 0 };
+      if (platformName === 'linkedin') {
+        var rEl = postEl.querySelector(platformConfig.reactionCountSelector);
+        if (rEl) result.reactions = extractCountFromEl(rEl);
+        var cEl = postEl.querySelector(platformConfig.commentCountSelector);
+        if (cEl) result.comments = extractCountFromEl(cEl);
+      } else if (platformName === 'facebook') {
+        var rEl2 = postEl.querySelector(platformConfig.reactionCountSelector);
+        if (rEl2) result.reactions = extractCountFromEl(rEl2);
+        var cEl2 = postEl.querySelector(platformConfig.commentCountSelector);
+        if (cEl2) result.comments = extractCountFromEl(cEl2);
+      } else if (platformName === 'x') {
+        var lEl = postEl.querySelector(platformConfig.likeCountSelector);
+        if (lEl) result.reactions = extractCountFromEl(lEl);
+        var rtEl = postEl.querySelector(platformConfig.retweetCountSelector);
+        if (rtEl) result.comments = extractCountFromEl(rtEl);
+      } else if (platformName === 'reddit') {
+        var sEl = postEl.querySelector(platformConfig.scoreSelector);
+        if (sEl) result.reactions = extractCountFromEl(sEl);
+        var clEl = postEl.querySelector(platformConfig.commentLinkSelector);
+        if (clEl) result.comments = extractCountFromEl(clEl);
       }
-      return null;
+      result.total = result.reactions + result.comments;
+      return result;
+    },
+
+    meetsEngagementThreshold: function (engagement) {
+      var t = this.config.engagementThresholds[platformName];
+      if (!t) return true;
+      if (platformName === 'x') return engagement.reactions >= (t.minLikes || 0) && engagement.comments >= (t.minRetweets || 0);
+      if (platformName === 'reddit') return engagement.reactions >= (t.minUpvotes || 0) && engagement.comments >= (t.minComments || 0);
+      return engagement.reactions >= (t.minReactions || 0) && engagement.comments >= (t.minComments || 0);
+    },
+
+    isPriorityTarget: function (postEl) {
+      var targets = this.config.priorityTargets;
+      if (!targets || targets.length === 0) return false;
+      var authorName = '', authorHandle = '';
+      if (platformName === 'linkedin' && platformConfig.authorSelector) {
+        var aEl = postEl.querySelector(platformConfig.authorSelector);
+        if (aEl) authorName = (aEl.innerText || aEl.textContent || '').trim().toLowerCase();
+        if (platformConfig.authorLinkSelector) {
+          var linkEl = postEl.querySelector(platformConfig.authorLinkSelector);
+          if (linkEl) authorHandle = (linkEl.getAttribute('href') || '').toLowerCase();
+        }
+      } else if (platformName === 'x' && platformConfig.handleSelector) {
+        var hEl = postEl.querySelector(platformConfig.handleSelector);
+        if (hEl) { authorHandle = (hEl.getAttribute('href') || '').toLowerCase().replace(/^\//, ''); authorName = (hEl.textContent || '').trim().toLowerCase(); }
+      } else if (platformName === 'reddit' && platformConfig.subredditSelector) {
+        var subEl = postEl.querySelector(platformConfig.subredditSelector);
+        if (subEl) authorHandle = (subEl.getAttribute('href') || '').toLowerCase();
+      } else if (platformConfig.authorSelector) {
+        var aEl2 = postEl.querySelector(platformConfig.authorSelector);
+        if (aEl2) authorName = (aEl2.innerText || aEl2.textContent || '').trim().toLowerCase();
+      }
+      for (var i = 0; i < targets.length; i++) {
+        var target = targets[i];
+        if (target.platform && target.platform !== platformName) continue;
+        var tName = (target.name || '').toLowerCase();
+        if (!tName) continue;
+        if (authorName.indexOf(tName) !== -1) return true;
+        if (authorHandle.indexOf(tName) !== -1) return true;
+        if (authorHandle.indexOf(tName.replace('@', '')) !== -1) return true;
+      }
+      return false;
+    },
+
+    classifyAndComment: function (context, callback) {
+      var self = this;
+      var tone = (savedSettings && savedSettings.defaultTone) || 'casual';
+      var contextInfo = '';
+      var allContexts = (savedSettings && savedSettings.contexts) || [];
+      for (var i = 0; i < allContexts.length; i++) { if (allContexts[i].isDefault) { contextInfo = allContexts[i].body; break; } }
+      var task = self.config.contentFilter === 'business' ? 'auto_classify_comment' : 'quick_reply';
+      chrome.runtime.sendMessage({
+        type: 'generate', data: {
+          platform: platformName,
+          task: task,
+          tone: tone,
+          context: context,
+          personality: platformConfig.personality,
+          contextInfo: contextInfo
+        }
+      }, function (response) {
+        if (chrome.runtime.lastError) { console.log('[SAIC-Auto] Error:', chrome.runtime.lastError.message); callback(null); return; }
+        if (response && response.error) { console.log('[SAIC-Auto] API error:', response.error); callback(null); return; }
+        if (response && response.text) {
+          var text = response.text.trim();
+          if (text.toUpperCase() === 'SKIP' || text.toUpperCase().indexOf('SKIP') === 0) { callback(null); return; }
+          callback(text); return;
+        }
+        callback(null);
+      });
+    },
+
+    submitCommentAuto: function (postEl, text, callback) {
+      var self = this;
+      if (self.state !== 'running') { callback(false); return; }
+      self.clickCommentButton(postEl, function (replyField) {
+        if (!replyField) { console.log('[SAIC-Auto] No reply field'); callback(false); return; }
+        self.typeComment(replyField, text, function () {
+          if (self.state !== 'running') { callback(false); return; }
+          setTimeout(function () {
+            self.findAndClickSubmit(postEl, replyField, callback);
+          }, jitter(randomBetween(500, 1500), 0.2));
+        });
+      });
+    },
+
+    showReviewOverlay: function (postEl, text, callback) {
+      var self = this;
+      var overlay = document.createElement('div');
+      overlay.className = 'saic-review-overlay';
+      overlay.innerHTML =
+        '<div class="saic-review-card">' +
+          '<div class="saic-review-title">AI Generated Comment</div>' +
+          '<div class="saic-review-text">' + text.replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>' +
+          '<div class="saic-review-actions">' +
+            '<button type="button" class="saic-review-post">Post Comment</button>' +
+            '<button type="button" class="saic-review-skip">Skip</button>' +
+          '</div>' +
+        '</div>';
+      overlay.querySelector('.saic-review-post').addEventListener('click', function () {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        self.clickCommentButton(postEl, function (replyField) {
+          if (!replyField) { callback(false); return; }
+          self.typeComment(replyField, text, function () { self.findAndClickSubmit(postEl, replyField, callback); });
+        });
+      });
+      overlay.querySelector('.saic-review-skip').addEventListener('click', function () {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        callback(false);
+      });
+      document.body.appendChild(overlay);
+    },
+
+    addLog: function (msg) {
+      this.logEntries.push(msg);
+      if (this.logEntries.length > 20) this.logEntries.shift();
+      this.updateLogUI();
+    },
+
+    updateLogUI: function () {
+      if (!this.panelEl) return;
+      var logEl = this.panelEl.querySelector('.saic-auto-log');
+      if (!logEl) return;
+      var html = '';
+      var start = Math.max(0, this.logEntries.length - 5);
+      for (var i = start; i < this.logEntries.length; i++) html += '<div class="saic-log-entry">' + this.logEntries[i] + '</div>';
+      logEl.innerHTML = html;
+      logEl.scrollTop = logEl.scrollHeight;
     },
 
     getPostFingerprint: function (el) {
+      var postUrl = getPostLink(el, platformName);
       var text = (el.innerText || '').substring(0, 300).trim();
       var hash = 0;
-      for (var i = 0; i < text.length; i++) {
-        hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-      }
+      var combined = postUrl + '|' + text;
+      for (var i = 0; i < combined.length; i++) hash = ((hash << 5) - hash + combined.charCodeAt(i)) | 0;
       return Math.abs(hash).toString(36) + '_' + el.tagName;
-    },
-
-    isAlreadyCommented: function (postEl) {
-      // Rely on processedPosts set for dedup — DOM-based user detection is unreliable
-      return false;
     },
 
     extractPostContext: function (postEl) {
       var text = extractText(postEl, 2000);
       var author = '';
-      if (platformConfig.authorSelector) {
-        var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
-        if (authorEls.length > 0) {
-          author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
+      var authorInfo = getAuthorInfo(postEl, platformName);
+      if (authorInfo.name) {
+        author = authorInfo.name;
+        if (authorInfo.handle && authorInfo.handle !== authorInfo.name) {
+          author += ' (@' + authorInfo.handle + ')';
         }
+      } else if (platformConfig.authorSelector) {
+        var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
+        if (authorEls.length > 0) author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
       }
-
       var siblings = postEl.parentElement ? postEl.parentElement.children : [];
       var comments = [];
       for (var i = 0; i < siblings.length && comments.length < 5; i++) {
@@ -1057,147 +1515,99 @@
           }
         }
       }
-
-      return {
-        postText: text,
-        author: author,
-        nearbyComments: comments,
-        selectedText: ''
-      };
-    },
-
-    // ── AI Generation ──
-    generateComment: function (context, callback) {
-      var self = this;
-      var tone = (savedSettings && savedSettings.defaultTone) || 'casual';
-
-      var contextInfo = '';
-      var allContexts = (savedSettings && savedSettings.contexts) || [];
-      var defaultCtx = allContexts.find(function (c) { return c.isDefault; });
-      if (defaultCtx) contextInfo = defaultCtx.body;
-
-      chrome.runtime.sendMessage({
-        type: 'generate',
-        data: {
-          platform: platformName,
-          task: 'quick_reply',
-          tone: tone,
-          context: context,
-          personality: platformConfig.personality,
-          contextInfo: contextInfo
-        }
-      }, function (response) {
-        if (chrome.runtime.lastError) {
-          console.log('[SAIC-Auto] Generate error:', chrome.runtime.lastError.message);
-          callback(null);
-          return;
-        }
-        if (response && response.error) {
-          console.log('[SAIC-Auto] Generate API error:', response.error);
-          callback(null);
-          return;
-        }
-        if (response && response.text) {
-          callback(response.text);
-          return;
-        }
-        callback(null);
-      });
-    },
-
-    // ── Comment Submission ──
-    typeAndSubmit: function (postEl, text, callback) {
-      var self = this;
-      if (self.state !== 'running') { callback(false); return; }
-
-      if (self.reviewMode) {
-        // Review mode: show comment in a dialog for user approval
-        var approved = confirm('AI Comment (click OK to post, Cancel to skip):\n\n' + text);
-        if (!approved) {
-          console.log('[SAIC-Auto] Comment skipped by user (review mode)');
-          callback(false);
-          return;
-        }
-      }
-
-      self.clickCommentButton(postEl, function (replyField) {
-        if (!replyField) {
-          console.log('[SAIC-Auto] Could not find reply field after clicking comment button');
-          callback(false);
-          return;
-        }
-
-        self.typeComment(replyField, text, function () {
-          if (self.state !== 'running') { callback(false); return; }
-
-          setTimeout(function () {
-            self.clickSubmitButton(postEl, replyField, function (success) {
-              callback(success);
-            });
-          }, 500 + Math.random() * 500);
-        });
-      });
+      return { postText: text, author: author, authorHandle: authorInfo.handle, authorProfileUrl: authorInfo.profileUrl, nearbyComments: comments, selectedText: '' };
     },
 
     clickCommentButton: function (postEl, callback) {
+      var self = this;
       var selector = platformConfig.commentButtonSelector;
       if (!selector) { callback(null); return; }
-
+      // Search comment button within post, then immediate parent only
       var btn = postEl.querySelector(selector);
       if (!btn) {
         var parent = postEl.parentElement;
         if (parent) btn = parent.querySelector(selector);
       }
-      if (!btn) { callback(null); return; }
-
-      btn.click();
-      console.log('[SAIC-Auto] Clicked comment button');
-
-      var attempts = 0;
-      var maxAttempts = 10;
-      var findField = function () {
-        attempts++;
-        var field = null;
-        var replySelector = platformConfig.replyFieldSelector;
-        if (replySelector) {
-          var candidates = document.querySelectorAll(replySelector);
-          for (var i = 0; i < candidates.length; i++) {
-            var rect = candidates[i].getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-              field = candidates[i];
-              break;
-            }
+      if (!btn) {
+        // Last resort: find nearest button within post visual bounds
+        var postRect2 = postEl.getBoundingClientRect();
+        var allBtns = document.querySelectorAll(selector);
+        for (var bi = 0; bi < allBtns.length; bi++) {
+          var br = allBtns[bi].getBoundingClientRect();
+          if (br.top >= postRect2.top && br.bottom <= postRect2.bottom + 60) {
+            btn = allBtns[bi];
+            break;
           }
         }
-        if (field) {
-          callback(field);
-        } else if (attempts < maxAttempts) {
-          setTimeout(findField, 200);
-        } else {
-          callback(null);
-        }
-      };
-      setTimeout(findField, 300);
+      }
+      if (!btn) { callback(null); return; }
+      var postRect = postEl.getBoundingClientRect();
+      humanMouseMove(btn, function () {
+        btn.click();
+        console.log('[SAIC-Auto] Clicked comment button');
+        var attempts = 0, maxAttempts = 10;
+        var findField = function () {
+          attempts++;
+          var field = null;
+          var replySelector = platformConfig.replyFieldSelector;
+          if (replySelector) {
+            // Tier 1: Search scoped to the exact post element
+            var postCandidates = postEl.querySelectorAll(replySelector);
+            for (var i = 0; i < postCandidates.length; i++) {
+              var r = postCandidates[i].getBoundingClientRect();
+              if (r.width > 0 && r.height > 0) { field = postCandidates[i]; break; }
+            }
+            // Tier 2: Check parent container but only fields that visually overlap with the post
+            if (!field && postEl.parentElement) {
+              var parentCandidates = postEl.parentElement.querySelectorAll(replySelector);
+              for (var j = 0; j < parentCandidates.length; j++) {
+                var r2 = parentCandidates[j].getBoundingClientRect();
+                if (r2.width > 0 && r2.height > 0) {
+                  // Field must be within or directly below the post (max 150px below post bottom)
+                  if (r2.top >= postRect.top - 20 && r2.top <= postRect.bottom + 150) {
+                    field = parentCandidates[j];
+                    break;
+                  }
+                }
+              }
+            }
+            // Tier 3: Global search with strict proximity — only fields directly below post
+            if (!field) {
+              var allCandidates = document.querySelectorAll(replySelector);
+              var bestDist = Infinity;
+              for (var k = 0; k < allCandidates.length; k++) {
+                var r3 = allCandidates[k].getBoundingClientRect();
+                if (r3.width > 0 && r3.height > 0) {
+                  // Must be below the post top and within 200px below post bottom
+                  var dy = r3.top - postRect.bottom;
+                  var dx = Math.abs(r3.left - postRect.left);
+                  if (dy >= -30 && dy <= 200) {
+                    var dist = Math.abs(dy) + dx * 0.5;
+                    if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
+                  }
+                }
+              }
+            }
+          }
+          if (field) callback(field);
+          else if (attempts < maxAttempts) setTimeout(findField, 200);
+          else callback(null);
+        };
+        setTimeout(findField, 300);
+      });
     },
 
     typeComment: function (field, text, callback) {
       var self = this;
       field.focus();
       field.scrollIntoView({ block: 'center' });
-
       var chars = text.split('');
       var i = 0;
-
       var typeNext = function () {
-        if (self.state !== 'running' || i >= chars.length) {
-          if (i >= chars.length) callback();
-          return;
-        }
-
+        if (self.state !== 'running' || i >= chars.length) { if (i >= chars.length) callback(); return; }
         var char = chars[i];
         field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: char }));
         field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, key: char }));
-
         if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
           var start = field.selectionStart;
           var val = field.value;
@@ -1206,205 +1616,266 @@
         } else {
           document.execCommand('insertText', false, char);
         }
-
         field.dispatchEvent(new Event('input', { bubbles: true }));
         field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: char }));
-
         i++;
-
-        var delay = 30 + Math.random() * 50;
-        if (Math.random() < 0.1) delay += 100 + Math.random() * 100;
-
+        var delay = jitter(randomBetween(25, 75), 0.15);
+        if (Math.random() < 0.08) delay += jitter(randomBetween(150, 350), 0.2);
         setTimeout(typeNext, delay);
       };
-
       typeNext();
     },
 
-    clickSubmitButton: function (postEl, replyField, callback) {
+    findAndClickSubmit: function (postEl, replyField, callback) {
       var selector = platformConfig.submitButtonSelector;
       if (!selector) { callback(false); return; }
-
       var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
       var btn = container.querySelector(selector);
-      if (!btn) {
-        btn = postEl.querySelector(selector);
-      }
+      if (!btn) btn = postEl.querySelector(selector);
       if (!btn) {
         var allBtns = container.querySelectorAll('button');
         for (var i = 0; i < allBtns.length; i++) {
           var txt = (allBtns[i].textContent || '').toLowerCase().trim();
-          if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') {
-            btn = allBtns[i];
-            break;
-          }
+          if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }
         }
       }
-
-      if (!btn) {
-        console.log('[SAIC-Auto] No submit button found');
-        callback(false);
-        return;
-      }
-
+      if (!btn) { console.log('[SAIC-Auto] No submit button'); callback(false); return; }
       var rect = btn.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) {
-        console.log('[SAIC-Auto] Submit button not visible');
-        callback(false);
-        return;
-      }
-
-      btn.click();
-      console.log('[SAIC-Auto] Clicked submit button');
-      callback(true);
+      if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Auto] Submit not visible'); callback(false); return; }
+      humanMouseMove(btn, function () { btn.click(); console.log('[SAIC-Auto] Submitted'); callback(true); });
     },
 
-    // ── Human-Like Scrolling ──
     humanScroll: function (targetY, callback) {
       var self = this;
       var startY = window.scrollY;
       var distance = targetY - startY;
       if (Math.abs(distance) < 10) { if (callback) callback(); return; }
-
-      var direction = distance > 0 ? 1 : -1;
-      var totalDuration = Math.abs(distance) / (300 + Math.random() * 300) * 1000;
-      totalDuration = Math.max(500, Math.min(3000, totalDuration));
-
-      var startTime = null;
-      var lastPauseAt = 0;
-
+      var totalDuration = Math.max(500, Math.min(3000, Math.abs(distance) / (300 + Math.random() * 300) * 1000));
+      var startTime = null, lastPauseAt = 0;
       function step(timestamp) {
-        if (self._abortScroll || self.state !== 'running') {
-          if (callback) callback();
-          return;
-        }
-
+        if (self._abortScroll || self.state !== 'running') { if (callback) callback(); return; }
         if (!startTime) startTime = timestamp;
-        var elapsed = timestamp - startTime;
-        var progress = Math.min(elapsed / totalDuration, 1);
-
-        var eased = progress < 0.5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-
-        var currentY = startY + distance * eased;
-        window.scrollTo(0, currentY);
-
+        var progress = Math.min((timestamp - startTime) / totalDuration, 1);
+        var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        window.scrollTo(0, startY + distance * eased);
         if (progress - lastPauseAt > 0.15 + Math.random() * 0.2 && progress < 0.9) {
           lastPauseAt = progress;
-          var pauseMs = 300 + Math.random() * 700;
-          setTimeout(function () {
-            requestAnimationFrame(step);
-          }, pauseMs);
+          setTimeout(function () { requestAnimationFrame(step); }, 300 + Math.random() * 700);
           return;
         }
-
-        if (progress < 1) {
-          requestAnimationFrame(step);
-        } else {
-          if (callback) callback();
-        }
+        if (progress < 1) requestAnimationFrame(step);
+        else { if (callback) callback(); }
       }
-
       requestAnimationFrame(step);
     },
 
     scrollToPost: function (postEl, callback) {
       var rect = postEl.getBoundingClientRect();
-      var targetY = window.scrollY + rect.top - 100;
-      this.humanScroll(targetY, callback);
+      this.humanScroll(window.scrollY + rect.top - 100, callback);
     },
 
-    // ── Floating Panel UI ──
+    quickAddTarget: function (name, platform, type) {
+      if (!name || !name.trim()) return;
+      this.config.priorityTargets.push({ name: name.trim(), platform: platform || platformName, type: type || 'person' });
+      this.saveTargetsToSettings();
+      this.addLog('Added target: ' + name.trim());
+      this.updateTargetsUI();
+    },
+
+    removeTarget: function (index) {
+      this.config.priorityTargets.splice(index, 1);
+      this.saveTargetsToSettings();
+      this.updateTargetsUI();
+    },
+
+    saveTargetsToSettings: function () {
+      var settings = savedSettings || {};
+      settings.priorityTargets = this.config.priorityTargets.slice();
+      chrome.runtime.sendMessage({ type: 'saveSettings', data: { priorityTargets: settings.priorityTargets } });
+    },
+
+    updateTargetsUI: function () {
+      if (!this.panelEl) return;
+      var listEl = this.panelEl.querySelector('.saic-targets-list');
+      if (!listEl) return;
+      var html = '';
+      var targets = this.config.priorityTargets;
+      for (var i = 0; i < targets.length; i++) {
+        html += '<span class="saic-target-chip">' + targets[i].name + '<span class="saic-target-remove" data-idx="' + i + '">&times;</span></span>';
+      }
+      listEl.innerHTML = html;
+      var chips = listEl.querySelectorAll('.saic-target-remove');
+      for (var j = 0; j < chips.length; j++) {
+        chips[j].addEventListener('click', function (e) { AutomationEngine.removeTarget(parseInt(e.target.getAttribute('data-idx'), 10)); });
+      }
+      var badge = this.panelEl.querySelector('.saic-targets-count');
+      if (badge) badge.textContent = targets.length;
+    },
+
+    recordComment: function (postEl, commentText, success) {
+      var authorInfo = getAuthorInfo(postEl, platformName);
+      var postLink = getPostLink(postEl, platformName);
+      var entry = {
+        timestamp: Date.now(),
+        platform: platformName,
+        postPreview: (postEl.innerText || '').substring(0, 120).trim().replace(/\n/g, ' '),
+        postLink: postLink,
+        comment: (commentText || '').substring(0, 200),
+        success: !!success,
+        authorName: authorInfo.name,
+        authorHandle: authorInfo.handle,
+        authorProfileUrl: authorInfo.profileUrl
+      };
+      this.commentHistory.unshift(entry);
+      if (this.commentHistory.length > 100) this.commentHistory.length = 100;
+      this.saveCommentHistory();
+      this.updateHistoryUI();
+    },
+
+    saveCommentHistory: function () {
+      try {
+        chrome.storage.local.set({ saic_commentHistory: this.commentHistory.slice(0, 50) });
+      } catch (e) { /* ignore */ }
+    },
+
+    loadCommentHistory: function () {
+      var self = this;
+      try {
+        chrome.storage.local.get('saic_commentHistory', function (result) {
+          if (result && result.saic_commentHistory) {
+            self.commentHistory = result.saic_commentHistory;
+            self.updateHistoryUI();
+          }
+        });
+      } catch (e) { /* ignore */ }
+    },
+
+    updateHistoryUI: function () {
+      if (!this.panelEl) return;
+      var histEl = this.panelEl.querySelector('.saic-history-list');
+      if (!histEl) return;
+      var countBadge = this.panelEl.querySelector('.saic-history-count');
+      if (countBadge) countBadge.textContent = this.commentHistory.length;
+      var platformIcons = { linkedin: 'in', facebook: 'fb', x: 'X', reddit: 'r/' };
+      var html = '';
+      var entries = this.commentHistory;
+      var start = Math.max(0, entries.length - 20);
+      for (var i = start; i < entries.length; i++) {
+        var e = entries[i];
+        var time = new Date(e.timestamp);
+        var timeStr = time.getHours() + ':' + String(time.getMinutes()).padStart(2, '0');
+        var dateStr = (time.getMonth() + 1) + '/' + time.getDate();
+        var icon = e.success ? '&#10003;' : '&#10007;';
+        var iconClass = e.success ? 'saic-hist-ok' : 'saic-hist-fail';
+        var pBadge = platformIcons[e.platform] || '?';
+        var authorLine = '';
+        if (e.authorName) {
+          var displayName = e.authorName;
+          if (e.authorHandle && e.authorHandle !== e.authorName) displayName += ' @' + e.authorHandle;
+          if (e.authorProfileUrl) {
+            authorLine = '<a class="saic-hist-author" href="' + e.authorProfileUrl.replace(/"/g, '&quot;') + '" target="_blank" title="View profile">' + displayName.replace(/</g, '&lt;') + '</a>';
+          } else {
+            authorLine = '<span class="saic-hist-author">' + displayName.replace(/</g, '&lt;') + '</span>';
+          }
+        }
+        html += '<div class="saic-hist-entry" data-platform="' + (e.platform || '') + '">' +
+          '<span class="saic-hist-icon ' + iconClass + '">' + icon + '</span>' +
+          '<span class="saic-hist-platform saic-plat-' + (e.platform || '') + '">' + pBadge + '</span>' +
+          '<div class="saic-hist-body">' +
+            (authorLine ? '<div class="saic-hist-author-row">' + authorLine + '</div>' : '') +
+            '<div class="saic-hist-preview">' + e.postPreview.replace(/</g, '&lt;').substring(0, 80) + '</div>' +
+            '<div class="saic-hist-comment">' + e.comment.replace(/</g, '&lt;').substring(0, 80) + '</div>' +
+            '<div class="saic-hist-meta">' +
+              '<span class="saic-hist-time">' + dateStr + ' ' + timeStr + '</span>' +
+              '<a class="saic-hist-link" href="' + e.postLink.replace(/"/g, '&quot;') + '" target="_blank" title="Open post to verify comment">View Post</a>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }
+      if (!html) html = '<div class="saic-hist-empty">No comments yet</div>';
+      histEl.innerHTML = html;
+    },
+
     createPanel: function () {
       var self = this;
       if (self.panelEl) return;
-
       self.btnEl = document.createElement('button');
       self.btnEl.type = 'button';
       self.btnEl.className = 'saic-auto-btn';
       self.btnEl.title = 'AI Copilot Automation';
-      self.btnEl.textContent = '\u25B6';
-      self.btnEl.addEventListener('click', function () {
-        self.togglePanel();
-      });
+      self.btnEl.textContent = '▶';
+      self.btnEl.addEventListener('click', function () { self.togglePanel(); });
 
       self.panelEl = document.createElement('div');
       self.panelEl.className = 'saic-auto-panel';
       self.panelEl.style.display = 'none';
-
+      var pName = platformName || 'unknown';
       self.panelEl.innerHTML =
-        '<div class="saic-auto-header">' +
-          '<span class="saic-auto-title">Auto Comment</span>' +
-          '<button type="button" class="saic-auto-close" title="Close panel">&times;</button>' +
-        '</div>' +
+        '<div class="saic-auto-header"><span class="saic-auto-title">Auto Comment</span><button type="button" class="saic-auto-close" title="Close">&times;</button></div>' +
         '<div class="saic-auto-body">' +
-          '<div class="saic-auto-status">' +
-            '<div class="saic-auto-dot"></div>' +
-            '<span class="saic-auto-status-text">Idle</span>' +
-          '</div>' +
-          '<div class="saic-auto-stats">' +
-            '<span class="saic-auto-stat">Comments: <strong>0</strong>/<span class="saic-auto-limit">\u221E</span></span>' +
-            '<span class="saic-auto-stat">Time: <strong class="saic-auto-elapsed">0:00</strong></span>' +
-          '</div>' +
+          '<div class="saic-auto-status-row"><div class="saic-auto-status"><div class="saic-auto-dot"></div><span class="saic-auto-status-text">Idle</span></div>' +
+            '<div class="saic-auto-mode-toggle"><span class="saic-mode-label">Auto</span><label class="saic-toggle"><input type="checkbox" class="saic-auto-cfg-mode" checked><span class="saic-toggle-slider"></span></label></div></div>' +
+          '<div class="saic-auto-stats"><span class="saic-auto-stat">Comments: <strong>0</strong>/<span class="saic-auto-limit">∞</span></span><span class="saic-auto-stat">Skipped: <strong class="saic-auto-skipped">0</strong></span><span class="saic-auto-stat">Time: <strong class="saic-auto-elapsed">0:00</strong></span></div>' +
           '<div class="saic-auto-timer"></div>' +
-          '<div class="saic-auto-controls">' +
-            '<button type="button" class="saic-auto-toggle-btn saic-auto-start">Start</button>' +
-            '<button type="button" class="saic-auto-toggle-btn saic-auto-pause" style="display:none;">Pause</button>' +
-            '<button type="button" class="saic-auto-gear" title="Settings">\u2699</button>' +
-          '</div>' +
+          '<div class="saic-auto-controls"><button type="button" class="saic-auto-toggle-btn saic-auto-start">Start</button><button type="button" class="saic-auto-toggle-btn saic-auto-pause" style="display:none;">Pause</button><button type="button" class="saic-auto-gear" title="Settings">⚙</button></div>' +
+          '<div class="saic-auto-log"></div>' +
+	          '<div class="saic-history-toggle"><button type="button" class="saic-history-btn">History <span class="saic-history-count">0</span></button></div>' +
+	          '<div class="saic-history-list"></div>' +
           '<div class="saic-auto-config">' +
-            '<div class="saic-auto-field">' +
-              '<label>Interval (sec)</label>' +
-              '<input type="number" class="saic-auto-cfg-interval" min="120" max="300" value="60">' +
-            '</div>' +
-            '<div class="saic-auto-field">' +
-              '<label>Stop after (0=off)</label>' +
-              '<input type="number" class="saic-auto-cfg-limit" min="0" max="500" value="0">' +
-            '</div>' +
-            '<div class="saic-auto-field">' +
-              '<label>Review before submit</label>' +
-              '<input type="checkbox" class="saic-auto-cfg-review" checked style="width:auto;">' +
-            '</div>' +
-            '<div class="saic-auto-platform">Platform: ' + (platformName || 'unknown') + '</div>' +
+            '<div class="saic-auto-field"><label>Interval: <span class="saic-interval-val">60</span>s</label><input type="range" class="saic-auto-cfg-interval" min="30" max="300" value="60"></div>' +
+            '<div class="saic-auto-field"><label>Stop after (0=off)</label><input type="number" class="saic-auto-cfg-limit" min="0" max="500" value="0"></div>' +
+            '<div class="saic-auto-field"><label>Content filter</label><select class="saic-auto-cfg-filter"><option value="business">Business / Startup only</option><option value="all">All posts</option></select></div>' +
+            '<div class="saic-auto-field"><label>Quick add target <span class="saic-targets-count">0</span></label><div class="saic-target-quick-add"><input type="text" class="saic-target-input" placeholder="e.g. Bill Gates, @naval, r/startups"><button type="button" class="saic-target-add-btn">+</button></div></div>' +
+            '<div class="saic-targets-list"></div>' +
+            '<div class="saic-auto-platform">Platform: ' + pName + '</div>' +
           '</div>' +
         '</div>';
 
       document.body.appendChild(self.btnEl);
       document.body.appendChild(self.panelEl);
 
-      // Wire up events
-      self.panelEl.querySelector('.saic-auto-close').addEventListener('click', function () {
-        self.panelEl.style.display = 'none';
-      });
+      self.panelEl.querySelector('.saic-auto-close').addEventListener('click', function () { self.panelEl.style.display = 'none'; });
 
       var startBtn = self.panelEl.querySelector('.saic-auto-start');
       var pauseBtn = self.panelEl.querySelector('.saic-auto-pause');
-
       startBtn.addEventListener('click', function () {
         if (self.state === 'idle' || self.state === 'stopped') {
-          self.config.interval = Math.max(120, Math.min(300, parseInt(self.panelEl.querySelector('.saic-auto-cfg-interval').value, 10) || 60));
+          self.config.interval = Math.max(30, Math.min(300, parseInt(self.panelEl.querySelector('.saic-auto-cfg-interval').value, 10) || 60));
           self.config.stopLimit = Math.max(0, parseInt(self.panelEl.querySelector('.saic-auto-cfg-limit').value, 10) || 0);
-          self.reviewMode = self.panelEl.querySelector('.saic-auto-cfg-review').checked;
+          self.config.autoSubmit = self.panelEl.querySelector('.saic-auto-cfg-mode').checked;
+          self.config.contentFilter = self.panelEl.querySelector('.saic-auto-cfg-filter').value;
           self.start();
-        } else if (self.state === 'paused') {
-          self.resume();
-        }
+        } else if (self.state === 'paused') { self.resume(); }
       });
-
       pauseBtn.addEventListener('click', function () {
-        if (self.state === 'running') {
-          self.pause();
-        } else if (self.state === 'paused') {
-          self.resume();
-        }
+        if (self.state === 'running') self.pause();
+        else if (self.state === 'paused') self.resume();
       });
-
       self.panelEl.querySelector('.saic-auto-gear').addEventListener('click', function () {
-        var config = self.panelEl.querySelector('.saic-auto-config');
-        config.classList.toggle('open');
+        self.panelEl.querySelector('.saic-auto-config').classList.toggle('open');
+      });
+      self.panelEl.querySelector('.saic-auto-cfg-interval').addEventListener('input', function () {
+        self.panelEl.querySelector('.saic-interval-val').textContent = this.value;
+      });
+      self.panelEl.querySelector('.saic-target-add-btn').addEventListener('click', function () {
+        var input = self.panelEl.querySelector('.saic-target-input');
+        var name = input.value.trim();
+        if (!name) return;
+        var type = 'person';
+        if (name.indexOf('r/') === 0) type = 'subreddit';
+        else if (name.indexOf('/groups/') !== -1) type = 'group';
+        self.quickAddTarget(name, platformName, type);
+        input.value = '';
+      });
+      self.panelEl.querySelector('.saic-target-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') self.panelEl.querySelector('.saic-target-add-btn').click();
       });
 
+      self.updateTargetsUI();
+      self.loadCommentHistory();
+      self.panelEl.querySelector('.saic-history-btn').addEventListener('click', function () {
+        self.panelEl.querySelector('.saic-history-list').classList.toggle('open');
+      });
       self.makePanelDraggable();
     },
 
@@ -1417,132 +1888,86 @@
       var self = this;
       var header = self.panelEl.querySelector('.saic-auto-header');
       if (!header) return;
-
-      var isDragging = false;
-      var startX = 0, startY = 0, startLeft = 0, startTop = 0;
-
+      var isDragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
       header.addEventListener('mousedown', function (e) {
         if (e.target.closest('.saic-auto-close')) return;
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
+        isDragging = true; startX = e.clientX; startY = e.clientY;
         var rect = self.panelEl.getBoundingClientRect();
-        startLeft = rect.left;
-        startTop = rect.top;
-        self.panelEl.style.left = startLeft + 'px';
-        self.panelEl.style.top = startTop + 'px';
-        self.panelEl.style.right = 'auto';
-        self.panelEl.style.bottom = 'auto';
-        header.style.cursor = 'grabbing';
-        e.preventDefault();
+        startLeft = rect.left; startTop = rect.top;
+        self.panelEl.style.left = startLeft + 'px'; self.panelEl.style.top = startTop + 'px';
+        self.panelEl.style.right = 'auto'; self.panelEl.style.bottom = 'auto';
+        header.style.cursor = 'grabbing'; e.preventDefault();
       });
-
       document.addEventListener('mousemove', function (e) {
         if (!isDragging) return;
-        var dx = e.clientX - startX;
-        var dy = e.clientY - startY;
-        self.panelEl.style.left = (startLeft + dx) + 'px';
-        self.panelEl.style.top = (startTop + dy) + 'px';
-        self.panelEl.style.right = 'auto';
-        self.panelEl.style.bottom = 'auto';
+        self.panelEl.style.left = (startLeft + e.clientX - startX) + 'px';
+        self.panelEl.style.top = (startTop + e.clientY - startY) + 'px';
       });
-
-      document.addEventListener('mouseup', function () {
-        if (isDragging) {
-          isDragging = false;
-          header.style.cursor = 'grab';
-        }
-      });
+      document.addEventListener('mouseup', function () { if (isDragging) { isDragging = false; header.style.cursor = 'grab'; } });
     },
 
     updateUI: function () {
       var self = this;
       if (!self.panelEl) return;
-
       var dot = self.panelEl.querySelector('.saic-auto-dot');
       var statusText = self.panelEl.querySelector('.saic-auto-status-text');
       var startBtn = self.panelEl.querySelector('.saic-auto-start');
       var pauseBtn = self.panelEl.querySelector('.saic-auto-pause');
       var timerEl = self.panelEl.querySelector('.saic-auto-timer');
-      var commentsStrong = self.panelEl.querySelector('.saic-auto-stat strong');
-      var limitEl = self.panelEl.querySelector('.saic-auto-limit');
-      var elapsedEl = self.panelEl.querySelector('.saic-auto-elapsed');
-
       dot.className = 'saic-auto-dot';
-
       switch (self.state) {
         case 'idle':
-          dot.classList.add('stopped');
-          statusText.textContent = 'Idle';
-          startBtn.textContent = 'Start';
-          startBtn.className = 'saic-auto-toggle-btn saic-auto-start';
-          startBtn.style.display = '';
-          pauseBtn.style.display = 'none';
-          timerEl.textContent = '';
-          self.btnEl.className = 'saic-auto-btn';
-          self.btnEl.textContent = '\u25B6';
-          break;
+          dot.classList.add('stopped'); statusText.textContent = 'Idle';
+          startBtn.textContent = 'Start'; startBtn.className = 'saic-auto-toggle-btn saic-auto-start'; startBtn.style.display = '';
+          pauseBtn.style.display = 'none'; timerEl.textContent = '';
+          self.btnEl.className = 'saic-auto-btn'; self.btnEl.textContent = '▶'; break;
         case 'running':
-          dot.classList.add('running');
-          statusText.textContent = 'Running';
-          startBtn.style.display = 'none';
-          pauseBtn.textContent = 'Pause';
-          pauseBtn.className = 'saic-auto-toggle-btn saic-auto-pause';
-          pauseBtn.style.display = '';
-          self.btnEl.className = 'saic-auto-btn running';
-          self.btnEl.textContent = '\u23F8';
-          break;
+          dot.classList.add('running'); statusText.textContent = 'Running';
+          startBtn.style.display = 'none'; pauseBtn.textContent = 'Pause'; pauseBtn.className = 'saic-auto-toggle-btn saic-auto-pause'; pauseBtn.style.display = '';
+          self.btnEl.className = 'saic-auto-btn running'; self.btnEl.textContent = '⏸'; break;
         case 'paused':
-          dot.classList.add('paused');
-          statusText.textContent = 'Paused';
-          startBtn.textContent = 'Resume';
-          startBtn.className = 'saic-auto-toggle-btn saic-auto-start';
-          startBtn.style.display = '';
+          dot.classList.add('paused'); statusText.textContent = 'Paused';
+          startBtn.textContent = 'Resume'; startBtn.className = 'saic-auto-toggle-btn saic-auto-start'; startBtn.style.display = '';
           pauseBtn.style.display = 'none';
-          self.btnEl.className = 'saic-auto-btn';
-          self.btnEl.textContent = '\u25B6';
-          break;
+          self.btnEl.className = 'saic-auto-btn'; self.btnEl.textContent = '▶'; break;
         case 'stopped':
-          dot.classList.add('stopped');
-          statusText.textContent = 'Stopped (' + self.stats.commentsMade + ' comments)';
-          startBtn.textContent = 'Restart';
-          startBtn.className = 'saic-auto-toggle-btn saic-auto-start';
-          startBtn.style.display = '';
-          pauseBtn.style.display = 'none';
-          timerEl.textContent = '';
-          self.btnEl.className = 'saic-auto-btn';
-          self.btnEl.textContent = '\u25B6';
-          break;
+          dot.classList.add('stopped'); statusText.textContent = 'Stopped (' + self.stats.commentsMade + ')';
+          startBtn.textContent = 'Restart'; startBtn.className = 'saic-auto-toggle-btn saic-auto-start'; startBtn.style.display = '';
+          pauseBtn.style.display = 'none'; timerEl.textContent = '';
+          self.btnEl.className = 'saic-auto-btn'; self.btnEl.textContent = '▶'; break;
       }
-
-      if (commentsStrong) commentsStrong.textContent = self.stats.commentsMade;
-      if (limitEl) limitEl.textContent = self.config.stopLimit || '\u221E';
-      if (elapsedEl) elapsedEl.textContent = self.formatElapsed();
-
-      var cfgInterval = self.panelEl.querySelector('.saic-auto-cfg-interval');
-      var cfgLimit = self.panelEl.querySelector('.saic-auto-cfg-limit');
-      if (cfgInterval) cfgInterval.value = self.config.interval;
-      if (cfgLimit) cfgLimit.value = self.config.stopLimit;
+      var cs = self.panelEl.querySelector('.saic-auto-stat strong');
+      if (cs) cs.textContent = self.stats.commentsMade;
+      var le = self.panelEl.querySelector('.saic-auto-limit');
+      if (le) le.textContent = self.config.stopLimit || '∞';
+      var ee = self.panelEl.querySelector('.saic-auto-elapsed');
+      if (ee) ee.textContent = self.formatElapsed();
+      var se = self.panelEl.querySelector('.saic-auto-skipped');
+      if (se) se.textContent = self.stats.postsSkipped;
+      var ci = self.panelEl.querySelector('.saic-auto-cfg-interval');
+      var iv = self.panelEl.querySelector('.saic-interval-val');
+      if (ci) ci.value = self.config.interval; if (iv) iv.textContent = self.config.interval;
+      var cl = self.panelEl.querySelector('.saic-auto-cfg-limit');
+      if (cl) cl.value = self.config.stopLimit;
+      var cf = self.panelEl.querySelector('.saic-auto-cfg-filter');
+      if (cf) cf.value = self.config.contentFilter;
+      var cm = self.panelEl.querySelector('.saic-auto-cfg-mode');
+      if (cm) cm.checked = self.config.autoSubmit;
     },
 
     formatElapsed: function () {
       if (!this.stats.startTime) return '0:00';
       var ms = Date.now() - this.stats.startTime;
-      var secs = Math.floor(ms / 1000);
-      var mins = Math.floor(secs / 60);
-      var hrs = Math.floor(mins / 60);
-      if (hrs > 0) {
-        return hrs + ':' + String(mins % 60).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
-      }
+      var secs = Math.floor(ms / 1000), mins = Math.floor(secs / 60), hrs = Math.floor(mins / 60);
+      if (hrs > 0) return hrs + ':' + String(mins % 60).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
       return mins + ':' + String(secs % 60).padStart(2, '0');
     },
 
-    // ── Initialization ──
     init: function () {
       if (!platformConfig || !platformConfig.postSelector) return;
       this.loadConfig();
       this.createPanel();
-      console.log('[SAIC-Auto] Panel created for ' + platformName);
+      console.log('[SAIC-Auto] Panel created for ' + platformName + ' - ' + this.config.priorityTargets.length + ' targets');
     }
   };
 
