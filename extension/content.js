@@ -216,7 +216,7 @@
     points.push({ x: destX, y: destY });
 
     var totalDuration = randomBetween(400, 1200);
-    var startTime = null;
+    var startTime = performance.now();
     var pauseIndex = 1 + Math.floor(Math.random() * (points.length - 2));
     var paused = false;
     var pauseDuration = randomBetween(50, 150);
@@ -228,9 +228,9 @@
       document.dispatchEvent(evt);
     }
 
-    function animate(timestamp) {
-      if (!startTime) startTime = timestamp;
-      var elapsed = timestamp - startTime;
+    function animate() {
+      var now = performance.now();
+      var elapsed = now - startTime;
       var progress = Math.min(elapsed / totalDuration, 1);
 
       var eased = progress < 0.5
@@ -257,16 +257,14 @@
 
       if (!paused && segIndex >= pauseIndex && segProgress > 0.5) {
         paused = true;
-        setTimeout(function () {
-          requestAnimationFrame(animate);
-        }, pauseDuration);
+        bgTimeout(animate, pauseDuration);
         return;
       }
 
-      requestAnimationFrame(animate);
+      bgTimeout(animate, 16);
     }
 
-    requestAnimationFrame(animate);
+    animate();
   }
 
   // ── Platform detection ──
@@ -287,11 +285,14 @@
       editableFields: [
         '.ql-editor[contenteditable="true"]',
         '.msg-form__contenteditable[contenteditable="true"]',
-        '.comments-comment-texteditor[contenteditable="true"]',
+        '.comments-comment-texteditor [contenteditable="true"]',
+        '.comments-comment-box [contenteditable="true"]',
+        '[role="textbox"][contenteditable="true"]',
         '[data-placeholder*="post"]',
         '[aria-label*="Post"]',
         '[aria-label*="comment"]',
-        '[aria-label*="message"]'
+        '[aria-label*="message"]',
+        '.editor-content [contenteditable="true"]'
       ],
       postContainers: [
         '.feed-shared-update-v2',
@@ -353,11 +354,15 @@
     },
     reddit: {
       editableFields: [
-        '.public-DraftEditor-content[contenteditable="true"]',
         'textarea[name="text"]',
         'textarea#comment-textarea',
-        '[contenteditable="true"]',
-        '.md textarea'
+        '.notreview-textarea',
+        'textarea[class*="comment"]',
+        '.public-DraftEditor-content[contenteditable="true"]',
+        '[role="textbox"][contenteditable="true"]',
+        '[contenteditable="true"][data-placeholder]',
+        '.md textarea',
+        '[contenteditable="true"]'
       ],
       postContainers: [
         '.thing.link',
@@ -447,7 +452,7 @@
     if (!platformConfig) return null;
     var current = el;
     var depth = 0;
-    while (current && current !== document.body && depth < 12) {
+    while (current && current !== document.body && depth < 20) {
       if (current.matches) {
         // Check platform-specific selectors
         for (var i = 0; i < platformConfig.editableFields.length; i++) {
@@ -455,6 +460,8 @@
         }
         // Generic contenteditable fallback
         if (current.getAttribute && current.getAttribute('contenteditable') === 'true') return current;
+        // Role textbox (used by Reddit, LinkedIn, and many modern editors)
+        if (current.getAttribute && current.getAttribute('role') === 'textbox') return current;
       }
       // Textareas and text inputs
       if (current.tagName === 'TEXTAREA') return current;
@@ -564,15 +571,6 @@
       document.removeEventListener('mouseup', onMouseUp);
       origRemove();
     };
-  }
-
-  function repositionTrigger() {
-    if (!currentTriggerWrapper || !currentTriggerWrapper.__saic_field) return;
-    var field = currentTriggerWrapper.__saic_field;
-    if (!field.isConnected) { removeExistingTrigger(); return; }
-    var rect = field.getBoundingClientRect();
-    currentTriggerWrapper.style.left = (rect.right - 44) + 'px';
-    currentTriggerWrapper.style.top = (rect.bottom + 4) + 'px';
   }
 
   function openPopover(field) {
@@ -1004,12 +1002,7 @@
   // ── Click outside to close ──
   document.addEventListener('click', function (e) {
     if (currentPopoverEl && !currentPopoverEl.contains(e.target)) {
-      var isTrigger = e.target.classList && e.target.classList.contains('saic-trigger');
-      if (!isTrigger) hidePopover();
-    }
-    // Remove trigger when clicking outside trigger and popover
-    if (currentTriggerWrapper && !currentTriggerWrapper.contains(e.target) && (!currentPopoverEl || !currentPopoverEl.contains(e.target))) {
-      removeExistingTrigger();
+      hidePopover();
     }
     // Close any open More menus when clicking outside
     var openMenus = document.querySelectorAll('.saic-more-menu');
@@ -1023,13 +1016,7 @@
   // ── Track last focused editable field for keyboard shortcut ──
   document.addEventListener('focusin', function (e) {
     var field = findEditableField(e.target);
-    if (field) {
-      activeField = field;
-      if (!currentTriggerWrapper || currentTriggerWrapper.__saic_field !== field) {
-        var trig = createTriggerForField(field);
-        if (trig) trig.wrapper.__saic_field = field;
-      }
-    }
+    if (field) activeField = field;
   });
 
   // ── Initialization ──
@@ -1061,10 +1048,6 @@
       AutomationEngine.init();
     });
 
-    // Reposition trigger button on scroll/resize
-    window.addEventListener('scroll', repositionTrigger, true);
-    window.addEventListener('resize', repositionTrigger);
-
     // Keep settings fresh on changes
     chrome.storage.onChanged.addListener(function (changes) {
       if (changes.socialAiCopilot_settings) {
@@ -1082,6 +1065,44 @@
       openPopover(field);
     }
   }
+
+  // ══════════════════════════════════════════════════
+  // ── Background Tab Timer (Web Worker) ──
+  // Browsers freeze requestAnimationFrame and throttle setTimeout
+  // in background tabs. A Web Worker runs in a separate thread
+  // and is NOT subject to these throttling policies.
+  // ══════════════════════════════════════════════════
+  var _bgTimerCode = [
+    'var _t={};var _n=0;',
+    'self.onmessage=function(e){',
+    '  if(e.data.cmd==="set"){',
+    '    var id=++_n;',
+    '    _t[id]=setTimeout(function(){self.postMessage({evt:"fire",id:id});delete _t[id];},e.data.ms);',
+    '  }else if(e.data.cmd==="clear"){',
+    '    if(_t[e.data.id]!==undefined){clearTimeout(_t[e.data.id]);delete _t[e.data.id];}',
+    '  }',
+    '};'
+  ].join('\n');
+  var _bgTimerBlob = new Blob([_bgTimerCode], { type: 'application/javascript' });
+  var _bgTimerWorker = new Worker(URL.createObjectURL(_bgTimerBlob));
+  var _bgTimerCbs = {};
+  var _bgTimerSeq = 0;
+
+  function bgTimeout(fn, ms) {
+    var id = ++_bgTimerSeq;
+    _bgTimerCbs[id] = fn;
+    _bgTimerWorker.postMessage({ cmd: 'set', id: id, ms: ms });
+    return id;
+  }
+
+  function bgClear(id) {
+    if (id) { delete _bgTimerCbs[id]; _bgTimerWorker.postMessage({ cmd: 'clear', id: id }); }
+  }
+
+  _bgTimerWorker.onmessage = function (e) {
+    var cb = _bgTimerCbs[e.data.id];
+    if (cb) { delete _bgTimerCbs[e.data.id]; cb(); }
+  };
 
   // ══════════════════════════════════════════════════
   // ── Automation Engine ──
@@ -1113,6 +1134,7 @@
     timerInterval: null,
     nextActionTimeout: null,
     countdownInterval: null,
+    _cdBgTimer: null,
     nextActionTime: null,
     _abortScroll: false,
     logEntries: [],
@@ -1143,7 +1165,8 @@
         if (!confirm('Automated commenting may violate platform Terms of Service and could result in account suspension or permanent ban.\n\nAI-generated comments may need to be disclosed under FTC and EU regulations.\n\nContinue?')) return;
         this._confirmed = true;
       }
-      clearTimeout(this.nextActionTimeout);
+      bgClear(this.nextActionTimeout);
+      bgClear(this._cdBgTimer);
       clearInterval(this.countdownInterval);
       this.loadConfig();
       this.state = 'running';
@@ -1160,7 +1183,8 @@
     stop: function (reason) {
       this.state = 'stopped';
       this._abortScroll = true;
-      clearTimeout(this.nextActionTimeout);
+      bgClear(this.nextActionTimeout);
+      bgClear(this._cdBgTimer);
       clearInterval(this.countdownInterval);
       this.nextActionTimeout = null;
       this.countdownInterval = null;
@@ -1173,7 +1197,8 @@
       if (this.state !== 'running') return;
       this.state = 'paused';
       this._abortScroll = true;
-      clearTimeout(this.nextActionTimeout);
+      bgClear(this.nextActionTimeout);
+      bgClear(this._cdBgTimer);
       clearInterval(this.countdownInterval);
       this.nextActionTimeout = null;
       this.countdownInterval = null;
@@ -1202,7 +1227,7 @@
         self.addLog('No posts found, scrolling...');
         self.humanScroll(window.scrollY + window.innerHeight * (1 + Math.random() * 2), function () {
           if (self.state !== 'running') return;
-          setTimeout(function () {
+          bgTimeout(function () {
             posts = self.findCandidatePosts();
             if (posts.length === 0) {
               self.addLog('No posts after scroll, retry 10s');
@@ -1264,7 +1289,7 @@
         if (self.state !== 'running') return;
         var readDelay = jitter(randomBetween(3000, 8000), 0.15);
         self.updateCountdown(readDelay, 'Reading...');
-        setTimeout(function () {
+        bgTimeout(function () {
           if (self.state !== 'running') return;
           if (!post.isConnected) { self.addLog('Post removed from DOM'); self.scheduleNextCycle(jitter(3000, 0.3)); return; }
           var context = self.extractPostContext(post);
@@ -1308,22 +1333,25 @@
       if (self.state !== 'running') return;
       console.log('[SAIC-Auto] Next in ' + Math.round(delayMs / 1000) + 's');
       self.updateCountdown(delayMs, 'Next in');
-      self.nextActionTimeout = setTimeout(function () { if (self.state === 'running') self.runCycle(); }, delayMs);
+      self.nextActionTimeout = bgTimeout(function () { if (self.state === 'running') self.runCycle(); }, delayMs);
     },
 
     updateCountdown: function (totalMs, prefix) {
       var self = this;
       clearInterval(self.countdownInterval);
+      bgClear(self._cdBgTimer);
       if (!self.panelEl) return;
       var timerEl = self.panelEl.querySelector('.saic-auto-timer');
       if (!timerEl) return;
       var remaining = totalMs;
       timerEl.textContent = prefix + ' ' + Math.ceil(remaining / 1000) + 's';
-      self.countdownInterval = setInterval(function () {
+      function tick() {
         remaining -= 1000;
-        if (remaining <= 0) { clearInterval(self.countdownInterval); timerEl.textContent = 'Working...'; return; }
+        if (remaining <= 0) { timerEl.textContent = 'Working...'; return; }
         timerEl.textContent = prefix + ' ' + Math.ceil(remaining / 1000) + 's';
-      }, 1000);
+        self._cdBgTimer = bgTimeout(tick, 1000);
+      }
+      self._cdBgTimer = bgTimeout(tick, 1000);
     },
 
     getEngagementScore: function (postEl) {
@@ -1429,7 +1457,7 @@
         if (!replyField) { console.log('[SAIC-Auto] No reply field'); callback(false); return; }
         self.typeComment(replyField, text, function () {
           if (self.state !== 'running') { callback(false); return; }
-          setTimeout(function () {
+          bgTimeout(function () {
             self.findAndClickSubmit(postEl, replyField, callback);
           }, jitter(randomBetween(500, 1500), 0.2));
         });
@@ -1590,10 +1618,10 @@
             }
           }
           if (field) callback(field);
-          else if (attempts < maxAttempts) setTimeout(findField, 200);
+          else if (attempts < maxAttempts) bgTimeout(findField, 200);
           else callback(null);
         };
-        setTimeout(findField, 300);
+        bgTimeout(findField, 300);
       });
     },
 
@@ -1621,7 +1649,7 @@
         i++;
         var delay = jitter(randomBetween(25, 75), 0.15);
         if (Math.random() < 0.08) delay += jitter(randomBetween(150, 350), 0.2);
-        setTimeout(typeNext, delay);
+        bgTimeout(typeNext, delay);
       };
       typeNext();
     },
@@ -1651,22 +1679,22 @@
       var distance = targetY - startY;
       if (Math.abs(distance) < 10) { if (callback) callback(); return; }
       var totalDuration = Math.max(500, Math.min(3000, Math.abs(distance) / (300 + Math.random() * 300) * 1000));
-      var startTime = null, lastPauseAt = 0;
-      function step(timestamp) {
+      var startTime = performance.now(), lastPauseAt = 0;
+      function step() {
         if (self._abortScroll || self.state !== 'running') { if (callback) callback(); return; }
-        if (!startTime) startTime = timestamp;
-        var progress = Math.min((timestamp - startTime) / totalDuration, 1);
+        var now = performance.now();
+        var progress = Math.min((now - startTime) / totalDuration, 1);
         var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
         window.scrollTo(0, startY + distance * eased);
         if (progress - lastPauseAt > 0.15 + Math.random() * 0.2 && progress < 0.9) {
           lastPauseAt = progress;
-          setTimeout(function () { requestAnimationFrame(step); }, 300 + Math.random() * 700);
+          bgTimeout(step, 300 + Math.random() * 700);
           return;
         }
-        if (progress < 1) requestAnimationFrame(step);
+        if (progress < 1) bgTimeout(step, 16);
         else { if (callback) callback(); }
       }
-      requestAnimationFrame(step);
+      step();
     },
 
     scrollToPost: function (postEl, callback) {

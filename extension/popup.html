@@ -392,15 +392,82 @@
 
   <div class="section">
     <div class="section-title">Automation</div>
-    <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension. Use the review mode to approve comments before posting.</p>
+    <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension.</p>
     <div class="toggle-row">
+      <label for="autoSubmit">Auto-submit (no review)</label>
+      <label class="toggle"><input type="checkbox" id="autoSubmit" checked><span class="toggle-slider"></span></label>
+    </div>
+    <div class="toggle-row" style="margin-top:8px;">
       <label for="autoInterval">Interval (seconds)</label>
-      <input type="number" id="autoInterval" min="120" max="300" value="120" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      <input type="number" id="autoInterval" min="30" max="300" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
     </div>
     <div class="toggle-row" style="margin-top:8px;">
       <label for="autoStopLimit">Auto-stop after (0 = unlimited)</label>
       <input type="number" id="autoStopLimit" min="0" max="500" value="0" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
     </div>
+    <div class="toggle-row" style="margin-top:8px;">
+      <label for="contentFilter">Content filter</label>
+      <select id="contentFilter" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
+        <option value="business">Business / Startup only</option>
+        <option value="all">All posts</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Engagement Thresholds</div>
+    <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Only comment on posts meeting these minimums. Priority targets bypass these.</p>
+    <div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">LinkedIn</div>
+      <div class="toggle-row">
+        <label style="font-size:11px;">Min reactions</label>
+        <input type="number" id="eng-linkedin-reactions" min="0" max="10000" value="50" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:4px;">
+        <label style="font-size:11px;">Min comments</label>
+        <input type="number" id="eng-linkedin-comments" min="0" max="10000" value="10" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+    </div>
+    <div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">Facebook</div>
+      <div class="toggle-row">
+        <label style="font-size:11px;">Min reactions</label>
+        <input type="number" id="eng-facebook-reactions" min="0" max="10000" value="30" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:4px;">
+        <label style="font-size:11px;">Min comments</label>
+        <input type="number" id="eng-facebook-comments" min="0" max="10000" value="5" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+    </div>
+    <div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">X / Twitter</div>
+      <div class="toggle-row">
+        <label style="font-size:11px;">Min likes</label>
+        <input type="number" id="eng-x-likes" min="0" max="100000" value="100" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:4px;">
+        <label style="font-size:11px;">Min retweets</label>
+        <input type="number" id="eng-x-retweets" min="0" max="100000" value="20" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+    </div>
+    <div style="margin-bottom:4px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">Reddit</div>
+      <div class="toggle-row">
+        <label style="font-size:11px;">Min upvotes</label>
+        <input type="number" id="eng-reddit-upvotes" min="0" max="100000" value="50" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:4px;">
+        <label style="font-size:11px;">Min comments</label>
+        <input type="number" id="eng-reddit-comments" min="0" max="100000" value="10" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Priority Targets</div>
+    <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Always comment on posts from these accounts, pages, or groups. One per line.</p>
+    <textarea id="priorityTargets" rows="4" placeholder="Bill Gates | linkedin | person&#10;@naval | x | person&#10;r/startups | reddit | subreddit&#10;Stripe | linkedin | page" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
+    <p style="font-size:10px;color:#94a3b8;margin-top:4px;">Format: Name | platform | type (person/page/group/subreddit)</p>
   </div>
 
   <div class="section">

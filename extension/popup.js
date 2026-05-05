@@ -103,6 +103,17 @@
 
   providerSelect.addEventListener('change', updateProviderUI);
 
+  // ── Parse priority targets from textarea ──
+  function parseTargetText(text) {
+    if (!text || !text.trim()) return [];
+    return text.trim().split('\n').map(function (line) {
+      line = line.trim();
+      if (!line) return null;
+      var parts = line.split('|').map(function (p) { return p.trim(); });
+      return { name: parts[0] || '', platform: parts[1] || '', type: parts[2] || 'person' };
+    }).filter(function (t) { return t && t.name; });
+  }
+
   // ── Load settings ──
   function loadSettings() {
     chrome.runtime.sendMessage({ type: 'getSettings' }, function (settings) {
@@ -127,6 +138,32 @@
       // Load automation settings
       document.getElementById('autoInterval').value = settings.autoInterval || 60;
       document.getElementById('autoStopLimit').value = settings.autoStopLimit || 0;
+      document.getElementById('autoSubmit').checked = settings.autoSubmit !== false;
+      document.getElementById('contentFilter').value = settings.contentFilter || 'business';
+
+      // Load engagement thresholds
+      var eng = settings.engagementThresholds || {};
+      if (eng.linkedin) {
+        document.getElementById('eng-linkedin-reactions').value = eng.linkedin.minReactions || 50;
+        document.getElementById('eng-linkedin-comments').value = eng.linkedin.minComments || 10;
+      }
+      if (eng.facebook) {
+        document.getElementById('eng-facebook-reactions').value = eng.facebook.minReactions || 30;
+        document.getElementById('eng-facebook-comments').value = eng.facebook.minComments || 5;
+      }
+      if (eng.x) {
+        document.getElementById('eng-x-likes').value = eng.x.minLikes || 100;
+        document.getElementById('eng-x-retweets').value = eng.x.minRetweets || 20;
+      }
+      if (eng.reddit) {
+        document.getElementById('eng-reddit-upvotes').value = eng.reddit.minUpvotes || 50;
+        document.getElementById('eng-reddit-comments').value = eng.reddit.minComments || 10;
+      }
+
+      // Load priority targets
+      var targets = settings.priorityTargets || [];
+      var targetLines = targets.map(function (t) { return t.name + ' | ' + (t.platform || '') + ' | ' + (t.type || ''); });
+      document.getElementById('priorityTargets').value = targetLines.join('\n');
 
       updateProviderUI();
 
@@ -151,6 +188,15 @@
       defaultTone: defaultToneSelect.value,
       autoInterval: parseInt(document.getElementById('autoInterval').value, 10) || 60,
       autoStopLimit: parseInt(document.getElementById('autoStopLimit').value, 10) || 0,
+      autoSubmit: document.getElementById('autoSubmit').checked,
+      contentFilter: document.getElementById('contentFilter').value,
+      engagementThresholds: {
+        linkedin:  { minReactions: parseInt(document.getElementById('eng-linkedin-reactions').value, 10) || 50, minComments: parseInt(document.getElementById('eng-linkedin-comments').value, 10) || 10 },
+        facebook:  { minReactions: parseInt(document.getElementById('eng-facebook-reactions').value, 10) || 30, minComments: parseInt(document.getElementById('eng-facebook-comments').value, 10) || 5 },
+        x:         { minLikes: parseInt(document.getElementById('eng-x-likes').value, 10) || 100, minRetweets: parseInt(document.getElementById('eng-x-retweets').value, 10) || 20 },
+        reddit:    { minUpvotes: parseInt(document.getElementById('eng-reddit-upvotes').value, 10) || 50, minComments: parseInt(document.getElementById('eng-reddit-comments').value, 10) || 10 }
+      },
+      priorityTargets: parseTargetText(document.getElementById('priorityTargets').value),
       platforms: {
         linkedin: document.getElementById('platform-linkedin').checked,
         facebook: document.getElementById('platform-facebook').checked,
