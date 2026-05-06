@@ -13,7 +13,26 @@
       "Bash(node -c extension/content.js)",
       "Bash(node -c extension/popup.js)",
       "Bash(node -c utils/storage.js)",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "WebSearch",
+      "Bash(gh auth:*)",
+      "Bash(gh --version)",
+      "Bash(find .:*)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/MetaGLM/zhipuai-sdk-python-v4/main/src/zhipuai/_client.py\")",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "Bash(claude mcp:*)",
+      "Bash(gh repo:*)",
+      "Bash(grep -E \"\\\\.\\(css|png|jpg|jpeg|gif|svg\\)$\")",
+      "Bash(node -c \"D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js\")",
+      "Bash(node -c \"D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\background.js\")",
+      "Bash(node -c \"D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\popup.js\")",
+      "Bash(node -c extension/styles.css)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git checkout *)",
+      "Bash(node -c content.js)"
     ]
   }
 }

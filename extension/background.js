@@ -277,7 +277,7 @@ var TONE_GUIDES = {
 var TASK_INSTRUCTIONS = {
   reply: 'Write a reply to the post or comment below. 3-4 sentences. Read the original content carefully and respond directly to what was said — do not ignore or skim over the key points.',
   comment: 'Write a comment on the post below. 3-4 sentences. Read the post content thoroughly, then add a meaningful perspective or real-world example that connects to what the author actually said.',
-  quick_reply: 'Write a short, natural 2-3 line comment on the post. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. If the author name or handle is provided, naturally address or reference them by their first name in the comment. Make it feel personal and genuine.',
+  quick_reply: 'Write a short, natural 2-3 line comment on the post. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Make it feel personal and genuine. Do NOT address the author by name.',
   post: 'Write a new original post based on the topic or draft provided in the context. Make it structured and engaging.',
   rewrite: 'Rewrite and improve the text provided in the context below. Improve clarity without changing the core meaning.',
   hook: 'Write an attention-grabbing hook or opening line for a post on the topic provided. Make it stop-the-scroll worthy.',
@@ -285,10 +285,10 @@ var TASK_INSTRUCTIONS = {
   expand: 'Expand on the ideas in the text provided in the context below. Add more detail and depth.',
   grammar: 'Fix any grammar, spelling, punctuation, or phrasing errors in the text. Return only the corrected version.',
   summarize: 'Summarize the post or text provided in the context below concisely.',
-  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. If the author name or handle is provided, naturally address or reference them by their first name in the comment (e.g. "Great insight, [Name]!" or "Thanks for sharing this, [Name]"). Make it feel personal and genuine.'
+  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Do NOT address the author by name. Make it feel personal and genuine.'
 };
 
-function buildPrompt(platform, task, tone, context, personality, contextInfo) {
+function buildPrompt(platform, task, tone, context, personality, contextInfo, mentionPages) {
   var toneGuide = TONE_GUIDES[tone] || TONE_GUIDES.casual;
   var taskInstruction = TASK_INSTRUCTIONS[task] || TASK_INSTRUCTIONS.reply;
 
@@ -318,8 +318,20 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo) {
     '- Match the language of the input context.',
     '- Do not make up facts or quotes not in the context.',
     '- No hashtags unless requested. No emojis unless tone is casual or funny.',
-    '- Write naturally, not robotically. Avoid "As a...", "In my opinion...", "Great post!"'
+    '- Write naturally, not robotically. Avoid "As a...", "In my opinion...", "Great post!"',
+    '- Do NOT mention or address the post author by name. Never say their first name.',
+    '- Use simple, everyday words. No fancy vocabulary or jargon.',
+    '- NO em dashes (—). Use commas or short sentences instead.',
+    '- Avoid AI-sounding phrases: "game-changer", "landscape", "delve", "foster", "leverage", "navigate", "realm", "testament", "tapestry", "unleash", "pave the way", "in today\'s world", "it\'s worth noting".',
+    '- Avoid generic openings: "Great post!", "Spot on!", "Couldn\'t agree more!", "This!"',
+    '- Keep sentences short. Talk like you\'re chatting with a friend, not writing an essay.'
   );
+
+  // Mention pages instruction — tell AI to naturally include the page name
+  if (mentionPages && mentionPages.length > 0) {
+    systemLines.push('');
+    systemLines.push('You MUST naturally include the word "' + mentionPages[0] + '" somewhere in your comment. Work it into the sentence naturally, as if you casually referenced it. For example: "this is exactly what we deal with at ' + mentionPages[0] + '" or "' + mentionPages[0] + ' handles this kind of thing". Do NOT use the @ symbol. Just write the name as a plain word.');
+  }
   var systemMessage = systemLines.join('\n');
 
   var userParts = [];
@@ -393,6 +405,7 @@ var DEFAULT_SETTINGS = {
     reddit:    { minUpvotes: 50, minComments: 10 }
   },
   priorityTargets: [],
+  autoMentionPages: [],
   platforms: { linkedin: true, facebook: true, x: true, reddit: true }
 };
 
@@ -441,7 +454,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           data.tone,
           data.context,
           data.personality,
-          data.contextInfo || ''
+          data.contextInfo || '',
+          data.mentionPages || []
         );
 
         var providerOptions = {
