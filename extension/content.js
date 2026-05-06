@@ -1124,7 +1124,8 @@
         x:         { minLikes: 100, minRetweets: 20 },
         reddit:    { minUpvotes: 50, minComments: 10 }
       },
-      priorityTargets: []
+      priorityTargets: [],
+      autoMentionPages: []
     },
     stats: { commentsMade: 0, startTime: null, postsScanned: 0, postsSkipped: 0 },
     processedPosts: new Set(),
@@ -1157,6 +1158,9 @@
       }
       if (settings.priorityTargets && settings.priorityTargets.length) {
         this.config.priorityTargets = settings.priorityTargets;
+      }
+      if (settings.autoMentionPages && settings.autoMentionPages.length) {
+        this.config.autoMentionPages = settings.autoMentionPages;
       }
     },
 
@@ -1436,7 +1440,8 @@
           tone: tone,
           context: context,
           personality: platformConfig.personality,
-          contextInfo: contextInfo
+          contextInfo: contextInfo,
+          mentionPages: self.config.autoMentionPages || []
         }
       }, function (response) {
         if (chrome.runtime.lastError) { console.log('[SAIC-Auto] Error:', chrome.runtime.lastError.message); callback(null); return; }
@@ -1629,6 +1634,57 @@
       var self = this;
       field.focus();
       field.scrollIntoView({ block: 'center' });
+      var mentionPages = self.config.autoMentionPages || [];
+      var segments = self.splitByMentions(text, mentionPages);
+      self.typeSegments(field, segments, 0, callback);
+    },
+
+    splitByMentions: function (text, mentionPages) {
+      if (!mentionPages || mentionPages.length === 0) {
+        return [{ text: text, isMention: false }];
+      }
+      var segments = [];
+      var remaining = text;
+      while (remaining.length > 0) {
+        var bestIdx = -1, bestLen = 0;
+        for (var p = 0; p < mentionPages.length; p++) {
+          var page = mentionPages[p];
+          var idx = remaining.indexOf(page);
+          if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+            bestIdx = idx;
+            bestLen = page.length;
+          }
+        }
+        if (bestIdx === -1) {
+          segments.push({ text: remaining, isMention: false });
+          break;
+        }
+        if (bestIdx > 0) {
+          segments.push({ text: remaining.substring(0, bestIdx), isMention: false });
+        }
+        segments.push({ text: remaining.substring(bestIdx, bestIdx + bestLen), isMention: true });
+        remaining = remaining.substring(bestIdx + bestLen);
+      }
+      return segments;
+    },
+
+    typeSegments: function (field, segments, idx, callback) {
+      var self = this;
+      if (self.state !== 'running' || idx >= segments.length) { if (idx >= segments.length) callback(); return; }
+      var seg = segments[idx];
+      if (!seg.isMention) {
+        self.typeChars(field, seg.text, function () {
+          self.typeSegments(field, segments, idx + 1, callback);
+        });
+      } else {
+        self.insertMention(field, seg.text, function () {
+          self.typeSegments(field, segments, idx + 1, callback);
+        });
+      }
+    },
+
+    typeChars: function (field, text, callback) {
+      var self = this;
       var chars = text.split('');
       var i = 0;
       var typeNext = function () {
@@ -1652,6 +1708,68 @@
         bgTimeout(typeNext, delay);
       };
       typeNext();
+    },
+
+    insertMention: function (field, pageName, callback) {
+      var self = this;
+      if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
+        self.typeChars(field, pageName, callback);
+        return;
+      }
+      var mentionText = '@' + pageName;
+      self.typeChars(field, mentionText, function () {
+        self.selectMentionResult(field, callback);
+      });
+    },
+
+    selectMentionResult: function (field, callback) {
+      var self = this;
+      bgTimeout(function () {
+        if (self.state !== 'running') { callback(); return; }
+        var clicked = false;
+        var selectors = [];
+        if (platformName === 'linkedin') {
+          selectors = [
+            '.mentions-search-results li:first-child',
+            '.mentions-search-results [role="option"]:first-child',
+            '[class*="typeahead-v2"] li:first-child',
+            '[class*="typeahead"] [role="option"]:first-child',
+            '.entity-list li:first-child'
+          ];
+        } else if (platformName === 'facebook') {
+          selectors = [
+            '[role="listbox"] [role="option"]:first-child',
+            '[class*="mentionsInput"] [role="option"]:first-child'
+          ];
+        } else if (platformName === 'x') {
+          selectors = [
+            '[class*="typeahead"] [role="option"]:first-child',
+            '[role="listbox"] [role="option"]:first-child'
+          ];
+        } else if (platformName === 'reddit') {
+          selectors = [
+            '[class*="mention"] [role="option"]:first-child',
+            '[role="listbox"] [role="option"]:first-child'
+          ];
+        }
+        for (var i = 0; i < selectors.length; i++) {
+          var el = document.querySelector(selectors[i]);
+          if (el && el.offsetParent !== null) {
+            humanMouseMove(el, function () {
+              el.click();
+              bgTimeout(callback, 600);
+            });
+            clicked = true;
+            break;
+          }
+        }
+        if (!clicked) {
+          field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+          field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, key: 'Enter', keyCode: 13 }));
+          field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter', keyCode: 13 }));
+          bgTimeout(callback, 600);
+        }
+      }, 2500);
     },
 
     findAndClickSubmit: function (postEl, replyField, callback) {
@@ -1855,6 +1973,7 @@
             '<div class="saic-auto-field"><label>Content filter</label><select class="saic-auto-cfg-filter"><option value="business">Business / Startup only</option><option value="all">All posts</option></select></div>' +
             '<div class="saic-auto-field"><label>Quick add target <span class="saic-targets-count">0</span></label><div class="saic-target-quick-add"><input type="text" class="saic-target-input" placeholder="e.g. Bill Gates, @naval, r/startups"><button type="button" class="saic-target-add-btn">+</button></div></div>' +
             '<div class="saic-targets-list"></div>' +
+            '<div class="saic-auto-field"><label>Auto-mention pages</label><div class="saic-target-quick-add"><input type="text" class="saic-mention-input" placeholder="e.g. Periscale (comma-separated)"><button type="button" class="saic-mention-save-btn">Save</button></div></div>' +
             '<div class="saic-auto-platform">Platform: ' + pName + '</div>' +
           '</div>' +
         '</div>';
@@ -1900,6 +2019,20 @@
       });
 
       self.updateTargetsUI();
+      // Pre-fill mention pages input
+      var mentionInput = self.panelEl.querySelector('.saic-mention-input');
+      if (mentionInput && self.config.autoMentionPages) {
+        mentionInput.value = self.config.autoMentionPages.join(', ');
+      }
+      self.panelEl.querySelector('.saic-mention-save-btn').addEventListener('click', function () {
+        var raw = (self.panelEl.querySelector('.saic-mention-input').value || '').trim();
+        var pages = raw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+        self.config.autoMentionPages = pages;
+        var settings = savedSettings || {};
+        settings.autoMentionPages = pages;
+        chrome.runtime.sendMessage({ type: 'saveSettings', data: { autoMentionPages: pages } });
+        self.addLog('Mention pages updated: ' + (pages.length > 0 ? pages.join(', ') : 'none'));
+      });
       self.loadCommentHistory();
       self.panelEl.querySelector('.saic-history-btn').addEventListener('click', function () {
         self.panelEl.querySelector('.saic-history-list').classList.toggle('open');
