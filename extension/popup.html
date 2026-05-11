@@ -12,8 +12,8 @@
       color: #1e293b;
       background: #f8fafc;
       width: 380px;
-      min-height: 500px;
-      max-height: 650px;
+      min-height: 580px;
+      max-height: 700px;
       overflow-y: auto;
     }
     .header {
@@ -247,6 +247,34 @@
     .ctx-item:hover .ctx-btn { opacity: 1; }
     .ctx-btn-edit { color: #6366f1; }
     .ctx-btn-del { color: #ef4444; }
+    .tab-bar {
+      display: flex;
+      background: #f1f5f9;
+      border-bottom: 2px solid #e2e8f0;
+      padding: 0 4px;
+    }
+    .tab-bar .tab {
+      flex: 1;
+      padding: 8px 4px;
+      border: none;
+      background: none;
+      font-size: 11px;
+      font-weight: 500;
+      color: #64748b;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    .tab-bar .tab:hover { color: #6366f1; }
+    .tab-bar .tab.active {
+      color: #6366f1;
+      border-bottom-color: #6366f1;
+      font-weight: 600;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
   </style>
 </head>
 <body>
@@ -255,247 +283,401 @@
     <p>AI-powered writing assistant for social media</p>
   </div>
 
-  <div class="section">
-    <div class="section-title">Provider</div>
-    <label for="provider">AI Provider</label>
-    <select id="provider">
-      <option value="openai">OpenAI (GPT)</option>
-      <option value="glm">GLM (Zhipu AI)</option>
-      <option value="gemini">Google Gemini</option>
-      <option value="deepseek">DeepSeek</option>
-      <option value="qwen">Alibaba Qwen (DashScope)</option>
-      <option value="backend">Backend Proxy</option>
-    </select>
-
-    <div id="apiKeyGroup">
-      <label for="apiKey">API Key</label>
-      <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off">
-    </div>
-
-    <div id="openaiModelGroup" class="hidden">
-      <label for="openaiModel">OpenAI Model</label>
-      <select id="openaiModel">
-        <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-        <option value="gpt-4.1">GPT-4.1</option>
-        <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
-        <option value="o4-mini">o4-mini</option>
-        <option value="o3">o3</option>
-        <option value="gpt-5-nano">GPT-5 Nano</option>
-        <option value="gpt-5-mini">GPT-5 Mini</option>
-        <option value="gpt-5">GPT-5</option>
-        <option value="gpt-5.1">GPT-5.1</option>
-        <option value="gpt-5-pro">GPT-5 Pro</option>
-        <option value="gpt-5.2">GPT-5.2 (Flagship)</option>
-        <option value="gpt-5.2-pro">GPT-5.2 Pro</option>
-        <option value="custom">Custom...</option>
-      </select>
-      <input type="text" id="openaiModelCustom" class="hidden" placeholder="e.g. o3" autocomplete="off">
-    </div>
-
-    <div id="glmModelGroup" class="hidden">
-      <label for="glmModel">GLM Model</label>
-      <select id="glmModel">
-        <option value="glm-4-flash">GLM-4 Flash (Free)</option>
-        <option value="glm-4-air">GLM-4 Air</option>
-        <option value="glm-4-plus">GLM-4 Plus</option>
-        <option value="glm-4-long">GLM-4 Long</option>
-        <option value="glm-4v-flash">GLM-4V Flash (Vision)</option>
-        <option value="glm-5">GLM-5</option>
-        <option value="glm-5.1">GLM-5.1 (Latest)</option>
-        <option value="custom">Custom...</option>
-      </select>
-      <input type="text" id="glmModelCustom" class="hidden" placeholder="e.g. glm-z1-flash" autocomplete="off">
-    </div>
-
-    <div id="geminiModelGroup" class="hidden">
-      <label for="geminiModel">Gemini Model</label>
-      <select id="geminiModel">
-        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-        <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-        <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
-        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite Preview</option>
-        <option value="custom">Custom...</option>
-      </select>
-      <input type="text" id="geminiModelCustom" class="hidden" placeholder="e.g. gemini-3-flash-preview-0625" autocomplete="off">
-    </div>
-
-    <div id="deepseekModelGroup" class="hidden">
-      <label for="deepseekModel">DeepSeek Model</label>
-      <select id="deepseekModel">
-        <option value="deepseek-chat">DeepSeek Chat (V3.2)</option>
-        <option value="deepseek-reasoner">DeepSeek Reasoner (V3.2 Thinking)</option>
-        <option value="custom">Custom...</option>
-      </select>
-      <input type="text" id="deepseekModelCustom" class="hidden" placeholder="e.g. deepseek-v4" autocomplete="off">
-    </div>
-
-    <div id="qwenModelGroup" class="hidden">
-      <label for="qwenModel">Qwen Model</label>
-      <select id="qwenModel">
-        <option value="qwen-plus">Qwen Plus</option>
-        <option value="qwen-max">Qwen Max</option>
-        <option value="qwen-turbo">Qwen Turbo (Fast)</option>
-        <option value="qwen-turbo-latest">Qwen Turbo Latest</option>
-        <option value="qwq-plus">QwQ Plus (Reasoning)</option>
-        <option value="qwen-long">Qwen Long (Long Context)</option>
-        <option value="qwen3-235b-a22b">Qwen3 235B (MoE)</option>
-        <option value="qwen3-32b">Qwen3 32B</option>
-        <option value="qwen3-30b-a3b">Qwen3 30B-A3B (MoE)</option>
-        <option value="custom">Custom...</option>
-      </select>
-      <input type="text" id="qwenModelCustom" class="hidden" placeholder="e.g. qwen3-max" autocomplete="off">
-    </div>
-
-    <div id="backendTokenGroup" class="hidden">
-      <label for="backendToken">Backend Token</label>
-      <input type="password" id="backendToken" placeholder="your-backend-token" autocomplete="off">
-    </div>
+  <div class="tab-bar">
+    <button type="button" class="tab active" data-tab="general">General</button>
+    <button type="button" class="tab" data-tab="linkedin">LinkedIn</button>
+    <button type="button" class="tab" data-tab="facebook">Facebook</button>
+    <button type="button" class="tab" data-tab="x">X</button>
+    <button type="button" class="tab" data-tab="reddit">Reddit</button>
   </div>
 
-  <div class="section">
-    <div class="section-title">Tone</div>
-    <label for="defaultTone">Default Tone</label>
-    <select id="defaultTone">
-      <option value="casual">Casual</option>
-      <option value="funny">Funny</option>
-      <option value="informative">Informative</option>
-    </select>
-  </div>
+  <div id="panel-general" class="tab-panel active">
+    <div class="section">
+      <div class="section-title">Provider</div>
+      <label for="provider">AI Provider</label>
+      <select id="provider">
+        <option value="openai">OpenAI (GPT)</option>
+        <option value="glm">GLM (Zhipu AI)</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="qwen">Alibaba Qwen (DashScope)</option>
+        <option value="backend">Backend Proxy</option>
+      </select>
 
-  <div class="section">
-    <div class="section-title">Contexts</div>
-    <p style="font-size:11px;color:#94a3b8;margin-bottom:10px;">Add context profiles to guide AI responses. The default context is auto-applied when none is selected.</p>
-    <div id="contextList"></div>
-    <button type="button" id="addContextBtn" style="margin-top:8px;padding:6px 14px;border:1px dashed #6366f1;border-radius:6px;background:#f8faff;color:#6366f1;font-size:12px;font-weight:500;cursor:pointer;width:100%;">+ Add Context</button>
-
-    <!-- Context editor (hidden by default) -->
-    <div id="contextEditor" class="hidden" style="margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;">
-      <label for="contextName">Context Name</label>
-      <input type="text" id="contextName" placeholder="e.g. Sales Expert, Tech Writer, Agency Voice" maxlength="50" autocomplete="off">
-      <label for="contextBody">Context Content</label>
-      <textarea id="contextBody" rows="5" placeholder="Describe the context, persona, or guidelines the AI should follow when this context is selected. Example: You are a B2B SaaS sales expert. Focus on ROI, metrics, and business outcomes. Reference case studies and data points when possible." style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;margin-bottom:4px;color:#1e293b;background:#fff;"></textarea>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <span style="font-size:10px;color:#94a3b8;"><span id="wordCount">0</span>/500 words</span>
-        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#64748b;cursor:pointer;margin-bottom:0;">
-          <input type="checkbox" id="contextIsDefault" style="width:auto;margin:0;">
-          Set as default
-        </label>
+      <div id="apiKeyGroup">
+        <label for="apiKey">API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off">
       </div>
-      <div style="display:flex;gap:6px;">
-        <button type="button" id="saveContextBtn" style="flex:1;padding:6px;border:none;border-radius:6px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Save</button>
-        <button type="button" id="cancelContextBtn" style="flex:1;padding:6px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#64748b;font-size:12px;font-weight:500;cursor:pointer;">Cancel</button>
+
+      <div id="openaiModelGroup" class="hidden">
+        <label for="openaiModel">OpenAI Model</label>
+        <select id="openaiModel">
+          <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+          <option value="gpt-4.1">GPT-4.1</option>
+          <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+          <option value="o4-mini">o4-mini</option>
+          <option value="o3">o3</option>
+          <option value="gpt-5-nano">GPT-5 Nano</option>
+          <option value="gpt-5-mini">GPT-5 Mini</option>
+          <option value="gpt-5">GPT-5</option>
+          <option value="gpt-5.1">GPT-5.1</option>
+          <option value="gpt-5-pro">GPT-5 Pro</option>
+          <option value="gpt-5.2">GPT-5.2 (Flagship)</option>
+          <option value="gpt-5.2-pro">GPT-5.2 Pro</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input type="text" id="openaiModelCustom" class="hidden" placeholder="e.g. o3" autocomplete="off">
+      </div>
+
+      <div id="glmModelGroup" class="hidden">
+        <label for="glmModel">GLM Model</label>
+        <select id="glmModel">
+          <option value="glm-4-flash">GLM-4 Flash (Free)</option>
+          <option value="glm-4-air">GLM-4 Air</option>
+          <option value="glm-4-plus">GLM-4 Plus</option>
+          <option value="glm-4-long">GLM-4 Long</option>
+          <option value="glm-4v-flash">GLM-4V Flash (Vision)</option>
+          <option value="glm-5">GLM-5</option>
+          <option value="glm-5.1">GLM-5.1 (Latest)</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input type="text" id="glmModelCustom" class="hidden" placeholder="e.g. glm-z1-flash" autocomplete="off">
+      </div>
+
+      <div id="geminiModelGroup" class="hidden">
+        <label for="geminiModel">Gemini Model</label>
+        <select id="geminiModel">
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+          <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+          <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+          <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
+          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+          <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite Preview</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input type="text" id="geminiModelCustom" class="hidden" placeholder="e.g. gemini-3-flash-preview-0625" autocomplete="off">
+      </div>
+
+      <div id="deepseekModelGroup" class="hidden">
+        <label for="deepseekModel">DeepSeek Model</label>
+        <select id="deepseekModel">
+          <option value="deepseek-chat">DeepSeek Chat (V3.2)</option>
+          <option value="deepseek-reasoner">DeepSeek Reasoner (V3.2 Thinking)</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input type="text" id="deepseekModelCustom" class="hidden" placeholder="e.g. deepseek-v4" autocomplete="off">
+      </div>
+
+      <div id="qwenModelGroup" class="hidden">
+        <label for="qwenModel">Qwen Model</label>
+        <select id="qwenModel">
+          <option value="qwen-plus">Qwen Plus</option>
+          <option value="qwen-max">Qwen Max</option>
+          <option value="qwen-turbo">Qwen Turbo (Fast)</option>
+          <option value="qwen-turbo-latest">Qwen Turbo Latest</option>
+          <option value="qwq-plus">QwQ Plus (Reasoning)</option>
+          <option value="qwen-long">Qwen Long (Long Context)</option>
+          <option value="qwen3-235b-a22b">Qwen3 235B (MoE)</option>
+          <option value="qwen3-32b">Qwen3 32B</option>
+          <option value="qwen3-30b-a3b">Qwen3 30B-A3B (MoE)</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input type="text" id="qwenModelCustom" class="hidden" placeholder="e.g. qwen3-max" autocomplete="off">
+      </div>
+
+      <div id="backendTokenGroup" class="hidden">
+        <label for="backendToken">Backend Token</label>
+        <input type="password" id="backendToken" placeholder="your-backend-token" autocomplete="off">
       </div>
     </div>
+
+    <div class="section">
+      <div class="section-title">Contexts</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:10px;">Add context profiles to guide AI responses. The default context is auto-applied when none is selected.</p>
+      <div id="contextList"></div>
+      <button type="button" id="addContextBtn" style="margin-top:8px;padding:6px 14px;border:1px dashed #6366f1;border-radius:6px;background:#f8faff;color:#6366f1;font-size:12px;font-weight:500;cursor:pointer;width:100%;">+ Add Context</button>
+
+      <!-- Context editor (hidden by default) -->
+      <div id="contextEditor" class="hidden" style="margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;">
+        <label for="contextName">Context Name</label>
+        <input type="text" id="contextName" placeholder="e.g. Sales Expert, Tech Writer, Agency Voice" maxlength="50" autocomplete="off">
+        <label for="contextBody">Context Content</label>
+        <textarea id="contextBody" rows="5" placeholder="Describe the context, persona, or guidelines the AI should follow when this context is selected. Example: You are a B2B SaaS sales expert. Focus on ROI, metrics, and business outcomes. Reference case studies and data points when possible." style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;margin-bottom:4px;color:#1e293b;background:#fff;"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:10px;color:#94a3b8;"><span id="wordCount">0</span>/500 words</span>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#64748b;cursor:pointer;margin-bottom:0;">
+            <input type="checkbox" id="contextIsDefault" style="width:auto;margin:0;">
+            Set as default
+          </label>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button type="button" id="saveContextBtn" style="flex:1;padding:6px;border:none;border-radius:6px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Save</button>
+          <button type="button" id="cancelContextBtn" style="flex:1;padding:6px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#64748b;font-size:12px;font-weight:500;cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Platforms</div>
+      <div class="toggle-row">
+        <span>LinkedIn</span>
+        <label class="toggle"><input type="checkbox" id="platform-linkedin" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span>Facebook</span>
+        <label class="toggle"><input type="checkbox" id="platform-facebook" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span>X / Twitter</span>
+        <label class="toggle"><input type="checkbox" id="platform-x" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span>Reddit</span>
+        <label class="toggle"><input type="checkbox" id="platform-reddit" checked><span class="toggle-slider"></span></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Priority Targets</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Always comment on posts from these accounts. Check which platforms each target applies to.</p>
+      <div id="priorityTargetsList"></div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <input type="text" id="newTargetName" placeholder="Target name" style="flex:1;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
+        <button type="button" id="addTargetBtn" style="padding:6px 12px;border:1px solid #6366f1;border-radius:6px;background:#f8faff;color:#6366f1;font-size:12px;font-weight:500;cursor:pointer;">Add</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Recent History</div>
+      <div class="history-list" id="historyList">
+        <div style="color: #94a3b8; font-size: 12px;">Loading...</div>
+      </div>
+      <button class="clear-btn" id="clearHistoryBtn">Clear History</button>
+    </div>
   </div>
 
-  <div class="section">
-    <div class="section-title">Automation</div>
-    <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension.</p>
-    <div class="toggle-row">
-      <label for="autoSubmit">Auto-submit (no review)</label>
-      <label class="toggle"><input type="checkbox" id="autoSubmit" checked><span class="toggle-slider"></span></label>
-    </div>
-    <div class="toggle-row" style="margin-top:8px;">
-      <label for="autoInterval">Interval (seconds)</label>
-      <input type="number" id="autoInterval" min="30" max="300" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
-    </div>
-    <div class="toggle-row" style="margin-top:8px;">
-      <label for="autoStopLimit">Auto-stop after (0 = unlimited)</label>
-      <input type="number" id="autoStopLimit" min="0" max="500" value="0" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
-    </div>
-    <div class="toggle-row" style="margin-top:8px;">
-      <label for="contentFilter">Content filter</label>
-      <select id="contentFilter" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
-        <option value="business">Business / Startup only</option>
-        <option value="all">All posts</option>
+  <div id="panel-linkedin" class="tab-panel">
+    <div class="section">
+      <div class="section-title">Content</div>
+      <label for="ps-linkedin-tone">Tone</label>
+      <select id="ps-linkedin-tone">
+        <option value="casual">Casual</option>
+        <option value="funny">Funny</option>
+        <option value="informative">Informative</option>
+      </select>
+      <label for="ps-linkedin-activeContext">Active Context</label>
+      <select id="ps-linkedin-activeContext">
+        <option value="">None</option>
       </select>
     </div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Engagement Thresholds</div>
-    <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Only comment on posts meeting these minimums. Priority targets bypass these.</p>
-    <div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
-      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">LinkedIn</div>
+    <div class="section">
+      <div class="section-title">Automation</div>
+      <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension.</p>
+      <div class="toggle-row">
+        <label for="ps-linkedin-autoSubmit">Auto-submit (no review)</label>
+        <label class="toggle"><input type="checkbox" id="ps-linkedin-autoSubmit" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-linkedin-interval">Interval (seconds)</label>
+        <input type="number" id="ps-linkedin-interval" min="30" max="300" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-linkedin-stopLimit">Auto-stop after (0 = unlimited)</label>
+        <input type="number" id="ps-linkedin-stopLimit" min="0" max="500" value="0" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-linkedin-contentFilter">Content filter</label>
+        <select id="ps-linkedin-contentFilter" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
+          <option value="business">Business / Startup only</option>
+          <option value="all">All posts</option>
+        </select>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Engagement Thresholds</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Only comment on posts meeting these minimums. Priority targets bypass these.</p>
       <div class="toggle-row">
         <label style="font-size:11px;">Min reactions</label>
-        <input type="number" id="eng-linkedin-reactions" min="0" max="10000" value="50" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-linkedin-minReactions" min="0" max="10000" value="50" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
       <div class="toggle-row" style="margin-top:4px;">
         <label style="font-size:11px;">Min comments</label>
-        <input type="number" id="eng-linkedin-comments" min="0" max="10000" value="10" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-linkedin-minComments" min="0" max="10000" value="10" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
     </div>
-    <div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
-      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">Facebook</div>
+    <div class="section">
+      <div class="section-title">Mention Pages</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Pages to @mention in auto-comments. One per line.</p>
+      <textarea id="ps-linkedin-mentionPages" rows="3" placeholder="Periscale" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
+    </div>
+  </div>
+
+  <div id="panel-facebook" class="tab-panel">
+    <div class="section">
+      <div class="section-title">Content</div>
+      <label for="ps-facebook-tone">Tone</label>
+      <select id="ps-facebook-tone">
+        <option value="casual">Casual</option>
+        <option value="funny">Funny</option>
+        <option value="informative">Informative</option>
+      </select>
+      <label for="ps-facebook-activeContext">Active Context</label>
+      <select id="ps-facebook-activeContext">
+        <option value="">None</option>
+      </select>
+    </div>
+    <div class="section">
+      <div class="section-title">Automation</div>
+      <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension.</p>
+      <div class="toggle-row">
+        <label for="ps-facebook-autoSubmit">Auto-submit (no review)</label>
+        <label class="toggle"><input type="checkbox" id="ps-facebook-autoSubmit" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-facebook-interval">Interval (seconds)</label>
+        <input type="number" id="ps-facebook-interval" min="30" max="300" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-facebook-stopLimit">Auto-stop after (0 = unlimited)</label>
+        <input type="number" id="ps-facebook-stopLimit" min="0" max="500" value="0" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-facebook-contentFilter">Content filter</label>
+        <select id="ps-facebook-contentFilter" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
+          <option value="business">Business / Startup only</option>
+          <option value="all">All posts</option>
+        </select>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Engagement Thresholds</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Only comment on posts meeting these minimums. Priority targets bypass these.</p>
       <div class="toggle-row">
         <label style="font-size:11px;">Min reactions</label>
-        <input type="number" id="eng-facebook-reactions" min="0" max="10000" value="30" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-facebook-minReactions" min="0" max="10000" value="30" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
       <div class="toggle-row" style="margin-top:4px;">
         <label style="font-size:11px;">Min comments</label>
-        <input type="number" id="eng-facebook-comments" min="0" max="10000" value="5" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-facebook-minComments" min="0" max="10000" value="5" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
     </div>
-    <div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
-      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">X / Twitter</div>
+    <div class="section">
+      <div class="section-title">Mention Pages</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Pages to @mention in auto-comments. One per line.</p>
+      <textarea id="ps-facebook-mentionPages" rows="3" placeholder="Periscale" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
+    </div>
+  </div>
+
+  <div id="panel-x" class="tab-panel">
+    <div class="section">
+      <div class="section-title">Content</div>
+      <label for="ps-x-tone">Tone</label>
+      <select id="ps-x-tone">
+        <option value="casual">Casual</option>
+        <option value="funny">Funny</option>
+        <option value="informative">Informative</option>
+      </select>
+      <label for="ps-x-activeContext">Active Context</label>
+      <select id="ps-x-activeContext">
+        <option value="">None</option>
+      </select>
+    </div>
+    <div class="section">
+      <div class="section-title">Automation</div>
+      <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension.</p>
+      <div class="toggle-row">
+        <label for="ps-x-autoSubmit">Auto-submit (no review)</label>
+        <label class="toggle"><input type="checkbox" id="ps-x-autoSubmit" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-x-interval">Interval (seconds)</label>
+        <input type="number" id="ps-x-interval" min="30" max="300" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-x-stopLimit">Auto-stop after (0 = unlimited)</label>
+        <input type="number" id="ps-x-stopLimit" min="0" max="500" value="0" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-x-contentFilter">Content filter</label>
+        <select id="ps-x-contentFilter" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
+          <option value="business">Business / Startup only</option>
+          <option value="all">All posts</option>
+        </select>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Engagement Thresholds</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Only comment on posts meeting these minimums. Priority targets bypass these.</p>
       <div class="toggle-row">
         <label style="font-size:11px;">Min likes</label>
-        <input type="number" id="eng-x-likes" min="0" max="100000" value="100" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-x-minLikes" min="0" max="100000" value="100" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
       <div class="toggle-row" style="margin-top:4px;">
         <label style="font-size:11px;">Min retweets</label>
-        <input type="number" id="eng-x-retweets" min="0" max="100000" value="20" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-x-minRetweets" min="0" max="100000" value="20" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
     </div>
-    <div style="margin-bottom:4px;padding:6px 8px;background:#f8fafc;border-radius:6px;">
-      <div style="font-size:11px;font-weight:600;color:#1e293b;margin-bottom:4px;">Reddit</div>
+    <div class="section">
+      <div class="section-title">Mention Pages</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Pages to @mention in auto-comments. One per line.</p>
+      <textarea id="ps-x-mentionPages" rows="3" placeholder="Periscale" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
+    </div>
+  </div>
+
+  <div id="panel-reddit" class="tab-panel">
+    <div class="section">
+      <div class="section-title">Content</div>
+      <label for="ps-reddit-tone">Tone</label>
+      <select id="ps-reddit-tone">
+        <option value="casual">Casual</option>
+        <option value="funny">Funny</option>
+        <option value="informative">Informative</option>
+      </select>
+      <label for="ps-reddit-activeContext">Active Context</label>
+      <select id="ps-reddit-activeContext">
+        <option value="">None</option>
+      </select>
+    </div>
+    <div class="section">
+      <div class="section-title">Automation</div>
+      <p style="font-size:11px;color:#d97706;margin-bottom:10px;font-weight:500;">&#9888; Warning: Automated commenting may violate platform Terms of Service and could result in account suspension.</p>
+      <div class="toggle-row">
+        <label for="ps-reddit-autoSubmit">Auto-submit (no review)</label>
+        <label class="toggle"><input type="checkbox" id="ps-reddit-autoSubmit" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-interval">Interval (seconds)</label>
+        <input type="number" id="ps-reddit-interval" min="30" max="300" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-stopLimit">Auto-stop after (0 = unlimited)</label>
+        <input type="number" id="ps-reddit-stopLimit" min="0" max="500" value="0" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-contentFilter">Content filter</label>
+        <select id="ps-reddit-contentFilter" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;">
+          <option value="business">Business / Startup only</option>
+          <option value="all">All posts</option>
+        </select>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Engagement Thresholds</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Only comment on posts meeting these minimums. Priority targets bypass these.</p>
       <div class="toggle-row">
         <label style="font-size:11px;">Min upvotes</label>
-        <input type="number" id="eng-reddit-upvotes" min="0" max="100000" value="50" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-reddit-minUpvotes" min="0" max="100000" value="50" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
       <div class="toggle-row" style="margin-top:4px;">
         <label style="font-size:11px;">Min comments</label>
-        <input type="number" id="eng-reddit-comments" min="0" max="100000" value="10" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
+        <input type="number" id="ps-reddit-minComments" min="0" max="100000" value="10" style="width:60px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#1e293b;text-align:center;">
       </div>
     </div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Priority Targets</div>
-    <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Always comment on posts from these accounts, pages, or groups. One per line.</p>
-    <textarea id="priorityTargets" rows="4" placeholder="Bill Gates | linkedin | person&#10;@naval | x | person&#10;r/startups | reddit | subreddit&#10;Stripe | linkedin | page" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
-    <p style="font-size:10px;color:#94a3b8;margin-top:4px;">Format: Name | platform | type (person/page/group/subreddit)</p>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Platforms</div>
-    <div class="toggle-row">
-      <span>LinkedIn</span>
-      <label class="toggle"><input type="checkbox" id="platform-linkedin" checked><span class="toggle-slider"></span></label>
+    <div class="section">
+      <div class="section-title">Mention Pages</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Pages to @mention in auto-comments. One per line.</p>
+      <textarea id="ps-reddit-mentionPages" rows="3" placeholder="Periscale" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
     </div>
-    <div class="toggle-row">
-      <span>Facebook</span>
-      <label class="toggle"><input type="checkbox" id="platform-facebook" checked><span class="toggle-slider"></span></label>
-    </div>
-    <div class="toggle-row">
-      <span>X / Twitter</span>
-      <label class="toggle"><input type="checkbox" id="platform-x" checked><span class="toggle-slider"></span></label>
-    </div>
-    <div class="toggle-row">
-      <span>Reddit</span>
-      <label class="toggle"><input type="checkbox" id="platform-reddit" checked><span class="toggle-slider"></span></label>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Recent History</div>
-    <div class="history-list" id="historyList">
-      <div style="color: #94a3b8; font-size: 12px;">Loading...</div>
-    </div>
-    <button class="clear-btn" id="clearHistoryBtn">Clear History</button>
   </div>
 
   <button class="save-btn" id="saveBtn">Save Settings</button>

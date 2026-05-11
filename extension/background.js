@@ -382,6 +382,20 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
 
 // ── Settings ──
 
+var DEFAULT_PLATFORM_SETTINGS = {
+  tone: 'casual',
+  activeContext: '',
+  interval: 60,
+  autoSubmit: true,
+  contentFilter: 'business',
+  stopLimit: 0,
+  engagementThresholds: {
+    minReactions: 50,
+    minComments: 10
+  },
+  mentionPages: []
+};
+
 var DEFAULT_SETTINGS = {
   provider: 'openai',
   authMode: 'user_key',
@@ -392,31 +406,61 @@ var DEFAULT_SETTINGS = {
   deepseekModel: 'deepseek-chat',
   qwenModel: 'qwen-plus',
   backendToken: '',
-  defaultTone: 'casual',
   contexts: [],
-  autoInterval: 60,
-  autoStopLimit: 0,
-  autoSubmit: true,
-  contentFilter: 'business',
-  engagementThresholds: {
-    linkedin:  { minReactions: 50, minComments: 10 },
-    facebook:  { minReactions: 30, minComments: 5 },
-    x:         { minLikes: 100, minRetweets: 20 },
-    reddit:    { minUpvotes: 50, minComments: 10 }
-  },
   priorityTargets: [],
-  autoMentionPages: [],
-  platforms: { linkedin: true, facebook: true, x: true, reddit: true }
+  platforms: { linkedin: true, facebook: true, x: true, reddit: true },
+  platformSettings: {
+    linkedin: {
+      ...DEFAULT_PLATFORM_SETTINGS,
+      engagementThresholds: { minReactions: 50, minComments: 10 }
+    },
+    facebook: {
+      ...DEFAULT_PLATFORM_SETTINGS,
+      engagementThresholds: { minReactions: 30, minComments: 5 }
+    },
+    x: {
+      ...DEFAULT_PLATFORM_SETTINGS,
+      engagementThresholds: { minLikes: 100, minRetweets: 20 }
+    },
+    reddit: {
+      ...DEFAULT_PLATFORM_SETTINGS,
+      engagementThresholds: { minUpvotes: 50, minComments: 10 }
+    }
+  }
 };
+
+function migrateSettings(stored) {
+  if (stored.platformSettings) return stored;
+
+  var ps = {};
+  var platforms = ['linkedin', 'facebook', 'x', 'reddit'];
+  platforms.forEach(function (p) {
+    var defaults = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.platformSettings[p]));
+    defaults.tone = stored.defaultTone || 'casual';
+    defaults.interval = stored.autoInterval || 60;
+    defaults.autoSubmit = stored.autoSubmit !== false;
+    defaults.contentFilter = stored.contentFilter || 'business';
+    defaults.stopLimit = stored.autoStopLimit || 0;
+    defaults.mentionPages = stored.autoMentionPages || [];
+    if (stored.engagementThresholds && stored.engagementThresholds[p]) {
+      defaults.engagementThresholds = { ...defaults.engagementThresholds, ...stored.engagementThresholds[p] };
+    }
+    ps[p] = defaults;
+  });
+  stored.platformSettings = ps;
+  return stored;
+}
 
 async function getSettings() {
   return new Promise(function (resolve) {
     chrome.storage.local.get('socialAiCopilot_settings', function (result) {
       var stored = result.socialAiCopilot_settings || {};
+      stored = migrateSettings(stored);
       resolve({
         ...DEFAULT_SETTINGS,
         ...stored,
-        platforms: { ...DEFAULT_SETTINGS.platforms, ...(stored.platforms || {}) }
+        platforms: { ...DEFAULT_SETTINGS.platforms, ...(stored.platforms || {}) },
+        platformSettings: { ...DEFAULT_SETTINGS.platformSettings, ...(stored.platformSettings || {}) }
       });
     });
   });
@@ -517,7 +561,25 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (message.type === 'saveSettings') {
     (async function () {
       var current = await getSettings();
-      var merged = { ...current, ...message.data, platforms: { ...current.platforms, ...(message.data.platforms || {}) } };
+      var merged = {
+        ...current,
+        ...message.data,
+        platforms: { ...current.platforms, ...(message.data.platforms || {}) }
+      };
+      if (message.data.platformSettings) {
+        merged.platformSettings = { ...current.platformSettings };
+        var pKeys = Object.keys(message.data.platformSettings);
+        for (var i = 0; i < pKeys.length; i++) {
+          var pk = pKeys[i];
+          merged.platformSettings[pk] = { ...current.platformSettings[pk], ...message.data.platformSettings[pk] };
+          if (message.data.platformSettings[pk].engagementThresholds) {
+            merged.platformSettings[pk].engagementThresholds = {
+              ...current.platformSettings[pk].engagementThresholds,
+              ...message.data.platformSettings[pk].engagementThresholds
+            };
+          }
+        }
+      }
       chrome.storage.local.set({ socialAiCopilot_settings: merged }, function () {
         sendResponse({ ok: true });
       });
