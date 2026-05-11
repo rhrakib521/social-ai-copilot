@@ -691,7 +691,7 @@
 
     var toneSelect = document.createElement('select');
     toneSelect.className = 'saic-tone-select';
-    var defaultTone = (savedSettings && savedSettings.defaultTone) || 'casual';
+    var defaultTone = ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {}).tone || 'casual';
     ['casual', 'funny', 'informative'].forEach(function (t) {
       var opt = document.createElement('option');
       opt.value = t;
@@ -1143,24 +1143,18 @@
 
     loadConfig: function () {
       var settings = savedSettings || {};
-      this.config.interval = Math.max(30, Math.min(300, settings.autoInterval || 60));
-      this.config.stopLimit = Math.max(0, settings.autoStopLimit || 0);
-      this.config.autoSubmit = settings.autoSubmit !== false;
-      this.config.contentFilter = settings.contentFilter || 'business';
-      if (settings.engagementThresholds) {
-        var t = settings.engagementThresholds;
-        this.config.engagementThresholds = {
-          linkedin:  { minReactions: (t.linkedin && t.linkedin.minReactions) || 50, minComments: (t.linkedin && t.linkedin.minComments) || 10 },
-          facebook:  { minReactions: (t.facebook && t.facebook.minReactions) || 30, minComments: (t.facebook && t.facebook.minComments) || 5 },
-          x:         { minLikes: (t.x && t.x.minLikes) || 100, minRetweets: (t.x && t.x.minRetweets) || 20 },
-          reddit:    { minUpvotes: (t.reddit && t.reddit.minUpvotes) || 50, minComments: (t.reddit && t.reddit.minComments) || 10 }
-        };
-      }
+      var ps = (settings.platformSettings && settings.platformSettings[platformName]) || {};
+      this.config.interval = Math.max(30, Math.min(300, ps.interval || 60));
+      this.config.stopLimit = Math.max(0, ps.stopLimit || 0);
+      this.config.autoSubmit = ps.autoSubmit !== false;
+      this.config.contentFilter = ps.contentFilter || 'business';
+      this.config.engagementThresholds = {};
+      this.config.engagementThresholds[platformName] = ps.engagementThresholds || {};
       if (settings.priorityTargets && settings.priorityTargets.length) {
         this.config.priorityTargets = settings.priorityTargets;
       }
-      if (settings.autoMentionPages && settings.autoMentionPages.length) {
-        this.config.autoMentionPages = settings.autoMentionPages;
+      if (ps.mentionPages && ps.mentionPages.length) {
+        this.config.autoMentionPages = ps.mentionPages;
       }
     },
 
@@ -1416,7 +1410,8 @@
       }
       for (var i = 0; i < targets.length; i++) {
         var target = targets[i];
-        if (target.platform && target.platform !== platformName) continue;
+        var tPlatforms = target.platforms || (target.platform ? [target.platform] : ['linkedin', 'facebook', 'x', 'reddit']);
+        if (tPlatforms.indexOf(platformName) === -1) continue;
         var tName = (target.name || '').toLowerCase();
         if (!tName) continue;
         if (authorName.indexOf(tName) !== -1) return true;
@@ -1428,10 +1423,25 @@
 
     classifyAndComment: function (context, callback) {
       var self = this;
-      var tone = (savedSettings && savedSettings.defaultTone) || 'casual';
+      var settings = savedSettings || {};
+      var ps = (settings.platformSettings && settings.platformSettings[platformName]) || {};
+
+      var tone = ps.tone || 'casual';
       var contextInfo = '';
-      var allContexts = (savedSettings && savedSettings.contexts) || [];
-      for (var i = 0; i < allContexts.length; i++) { if (allContexts[i].isDefault) { contextInfo = allContexts[i].body; break; } }
+      var allContexts = settings.contexts || [];
+      var activeContextId = ps.activeContext || '';
+
+      if (activeContextId) {
+        for (var i = 0; i < allContexts.length; i++) {
+          if (allContexts[i].id === activeContextId) { contextInfo = allContexts[i].body; break; }
+        }
+      }
+      if (!contextInfo) {
+        for (var j = 0; j < allContexts.length; j++) {
+          if (allContexts[j].isDefault) { contextInfo = allContexts[j].body; break; }
+        }
+      }
+
       var task = self.config.contentFilter === 'business' ? 'auto_classify_comment' : 'quick_reply';
       chrome.runtime.sendMessage({
         type: 'generate', data: {
