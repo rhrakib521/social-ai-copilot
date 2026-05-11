@@ -1031,12 +1031,10 @@
     setupDblClickListener();
 
     // Load settings asynchronously (tone defaults, platform toggle)
-    chrome.storage.local.get('socialAiCopilot_settings', function (result) {
-      if (chrome.runtime.lastError) {
-        // Storage read failed (e.g. invalidated context) — keep defaults
+    chrome.runtime.sendMessage({ type: 'getSettings' }, function (settings) {
+      if (chrome.runtime.lastError || !settings) {
         return;
       }
-      var settings = result.socialAiCopilot_settings || {};
       var platforms = settings.platforms || {};
       if (platforms[platformName] === false) {
         // Platform disabled — remove listener
@@ -2038,9 +2036,9 @@
         var raw = (self.panelEl.querySelector('.saic-mention-input').value || '').trim();
         var pages = raw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
         self.config.autoMentionPages = pages;
-        var settings = savedSettings || {};
-        settings.autoMentionPages = pages;
-        chrome.runtime.sendMessage({ type: 'saveSettings', data: { autoMentionPages: pages } });
+        var psUpdate = {};
+        psUpdate[platformName] = { mentionPages: pages };
+        chrome.runtime.sendMessage({ type: 'saveSettings', data: { platformSettings: psUpdate } });
         self.addLog('Mention pages updated: ' + (pages.length > 0 ? pages.join(', ') : 'none'));
       });
       self.loadCommentHistory();
