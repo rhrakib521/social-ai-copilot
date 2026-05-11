@@ -25,13 +25,36 @@
   var qwenModelCustom = document.getElementById('qwenModelCustom');
   var backendTokenGroup = document.getElementById('backendTokenGroup');
   var backendTokenInput = document.getElementById('backendToken');
-  var defaultToneSelect = document.getElementById('defaultTone');
   var historyList = document.getElementById('historyList');
   var clearHistoryBtn = document.getElementById('clearHistoryBtn');
   var saveBtn = document.getElementById('saveBtn');
   var statusEl = document.getElementById('status');
 
   var allModelGroups = [openaiModelGroup, glmModelGroup, geminiModelGroup, deepseekModelGroup, qwenModelGroup];
+
+  // ── Tab switching ──
+  var tabButtons = document.querySelectorAll('.tab-bar .tab');
+  var tabPanels = document.querySelectorAll('.tab-panel');
+
+  function switchTab(tabName) {
+    tabButtons.forEach(function (btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === tabName);
+    });
+    tabPanels.forEach(function (panel) {
+      panel.classList.toggle('active', panel.id === 'panel-' + tabName);
+    });
+    chrome.storage.local.set({ saic_activeTab: tabName });
+  }
+
+  tabButtons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      switchTab(btn.getAttribute('data-tab'));
+    });
+  });
+
+  chrome.storage.local.get('saic_activeTab', function (result) {
+    if (result.saic_activeTab) switchTab(result.saic_activeTab);
+  });
 
   // ── Toggle provider UI ──
   function updateProviderUI() {
@@ -103,15 +126,82 @@
 
   providerSelect.addEventListener('change', updateProviderUI);
 
-  // ── Parse priority targets from textarea ──
-  function parseTargetText(text) {
-    if (!text || !text.trim()) return [];
-    return text.trim().split('\n').map(function (line) {
-      line = line.trim();
-      if (!line) return null;
-      var parts = line.split('|').map(function (p) { return p.trim(); });
-      return { name: parts[0] || '', platform: parts[1] || '', type: parts[2] || 'person' };
-    }).filter(function (t) { return t && t.name; });
+  // ── Priority targets with platform checkboxes ──
+  var priorityTargetsData = [];
+
+  function renderPriorityTargets(targets) {
+    priorityTargetsData = targets || [];
+    var list = document.getElementById('priorityTargetsList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (priorityTargetsData.length === 0) {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'color:#94a3b8;font-size:11px;padding:4px 0;';
+      empty.textContent = 'No priority targets added.';
+      list.appendChild(empty);
+      return;
+    }
+
+    priorityTargetsData.forEach(function (target, idx) {
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:6px;background:#fff;';
+
+      var nameEl = document.createElement('span');
+      nameEl.style.cssText = 'flex:1;font-size:12px;font-weight:500;color:#1e293b;';
+      nameEl.textContent = target.name;
+      row.appendChild(nameEl);
+
+      ['linkedin', 'facebook', 'x', 'reddit'].forEach(function (p) {
+        var lbl = document.createElement('label');
+        lbl.style.cssText = 'font-size:10px;color:#64748b;cursor:pointer;display:flex;align-items:center;gap:2px;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.style.cssText = 'width:auto;margin:0;';
+        cb.checked = (target.platforms || []).indexOf(p) !== -1;
+        cb.addEventListener('change', function () {
+          var t = priorityTargetsData[idx];
+          if (!t.platforms) t.platforms = [];
+          if (cb.checked) {
+            if (t.platforms.indexOf(p) === -1) t.platforms.push(p);
+          } else {
+            t.platforms = t.platforms.filter(function (x) { return x !== p; });
+          }
+        });
+        var shortName = p === 'linkedin' ? 'LI' : p === 'facebook' ? 'FB' : p === 'x' ? 'X' : 'RE';
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(shortName));
+        row.appendChild(lbl);
+      });
+
+      var delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.style.cssText = 'border:none;background:none;color:#ef4444;cursor:pointer;font-size:11px;padding:2px 4px;';
+      delBtn.textContent = 'x';
+      delBtn.addEventListener('click', function () {
+        priorityTargetsData.splice(idx, 1);
+        renderPriorityTargets(priorityTargetsData);
+      });
+      row.appendChild(delBtn);
+
+      list.appendChild(row);
+    });
+  }
+
+  function collectPriorityTargets() {
+    return priorityTargetsData.filter(function (t) { return t.name; });
+  }
+
+  var addTargetBtn = document.getElementById('addTargetBtn');
+  if (addTargetBtn) {
+    addTargetBtn.addEventListener('click', function () {
+      var input = document.getElementById('newTargetName');
+      var name = (input.value || '').trim();
+      if (!name) return;
+      priorityTargetsData.push({ name: name, platforms: ['linkedin', 'facebook', 'x', 'reddit'], type: 'person' });
+      input.value = '';
+      renderPriorityTargets(priorityTargetsData);
+    });
   }
 
   // ── Load settings ──
@@ -121,7 +211,6 @@
       providerSelect.value = settings.provider || 'openai';
       apiKeyInput.value = settings.apiKey || '';
       backendTokenInput.value = settings.backendToken || '';
-      defaultToneSelect.value = settings.defaultTone || 'casual';
 
       if (settings.openaiModel) setModelUI(openaiModelSelect, openaiModelCustom, settings.openaiModel);
       if (settings.glmModel) setModelUI(glmModelSelect, glmModelCustom, settings.glmModel);
@@ -135,46 +224,105 @@
       document.getElementById('platform-x').checked = platforms.x !== false;
       document.getElementById('platform-reddit').checked = platforms.reddit !== false;
 
-      // Load automation settings
-      document.getElementById('autoInterval').value = settings.autoInterval || 60;
-      document.getElementById('autoStopLimit').value = settings.autoStopLimit || 0;
-      document.getElementById('autoSubmit').checked = settings.autoSubmit !== false;
-      document.getElementById('contentFilter').value = settings.contentFilter || 'business';
-
-      // Load engagement thresholds
-      var eng = settings.engagementThresholds || {};
-      if (eng.linkedin) {
-        document.getElementById('eng-linkedin-reactions').value = eng.linkedin.minReactions || 50;
-        document.getElementById('eng-linkedin-comments').value = eng.linkedin.minComments || 10;
-      }
-      if (eng.facebook) {
-        document.getElementById('eng-facebook-reactions').value = eng.facebook.minReactions || 30;
-        document.getElementById('eng-facebook-comments').value = eng.facebook.minComments || 5;
-      }
-      if (eng.x) {
-        document.getElementById('eng-x-likes').value = eng.x.minLikes || 100;
-        document.getElementById('eng-x-retweets').value = eng.x.minRetweets || 20;
-      }
-      if (eng.reddit) {
-        document.getElementById('eng-reddit-upvotes').value = eng.reddit.minUpvotes || 50;
-        document.getElementById('eng-reddit-comments').value = eng.reddit.minComments || 10;
-      }
-
-      // Load priority targets
-      var targets = settings.priorityTargets || [];
-      var targetLines = targets.map(function (t) { return t.name + ' | ' + (t.platform || '') + ' | ' + (t.type || ''); });
-      document.getElementById('priorityTargets').value = targetLines.join('\n');
-
       updateProviderUI();
 
       // Load contexts
       contexts = settings.contexts || [];
       renderContexts();
+
+      // Load per-platform settings
+      var ps = settings.platformSettings || {};
+      ['linkedin', 'facebook', 'x', 'reddit'].forEach(function (platform) {
+        var p = ps[platform] || {};
+        var toneEl = document.getElementById('ps-' + platform + '-tone');
+        if (toneEl) toneEl.value = p.tone || 'casual';
+
+        var intervalEl = document.getElementById('ps-' + platform + '-interval');
+        if (intervalEl) intervalEl.value = p.interval || 60;
+
+        var stopEl = document.getElementById('ps-' + platform + '-stopLimit');
+        if (stopEl) stopEl.value = p.stopLimit || 0;
+
+        var submitEl = document.getElementById('ps-' + platform + '-autoSubmit');
+        if (submitEl) submitEl.checked = p.autoSubmit !== false;
+
+        var filterEl = document.getElementById('ps-' + platform + '-contentFilter');
+        if (filterEl) filterEl.value = p.contentFilter || 'business';
+
+        var mentionEl = document.getElementById('ps-' + platform + '-mentionPages');
+        if (mentionEl) mentionEl.value = (p.mentionPages || []).join('\n');
+
+        // Platform-specific thresholds
+        var thresholds = p.engagementThresholds || {};
+        if (platform === 'linkedin' || platform === 'facebook') {
+          var rEl = document.getElementById('ps-' + platform + '-minReactions');
+          if (rEl) rEl.value = thresholds.minReactions || (platform === 'facebook' ? 30 : 50);
+          var cEl = document.getElementById('ps-' + platform + '-minComments');
+          if (cEl) cEl.value = thresholds.minComments || (platform === 'facebook' ? 5 : 10);
+        } else if (platform === 'x') {
+          var lEl = document.getElementById('ps-x-minLikes');
+          if (lEl) lEl.value = thresholds.minLikes || 100;
+          var rtEl = document.getElementById('ps-x-minRetweets');
+          if (rtEl) rtEl.value = thresholds.minRetweets || 20;
+        } else if (platform === 'reddit') {
+          var uEl = document.getElementById('ps-reddit-minUpvotes');
+          if (uEl) uEl.value = thresholds.minUpvotes || 50;
+          var rcEl = document.getElementById('ps-reddit-minComments');
+          if (rcEl) rcEl.value = thresholds.minComments || 10;
+        }
+      });
+
+      // Populate active context dropdowns per platform
+      ['linkedin', 'facebook', 'x', 'reddit'].forEach(function (platform) {
+        var ctxSelect = document.getElementById('ps-' + platform + '-activeContext');
+        if (!ctxSelect) return;
+        ctxSelect.innerHTML = '<option value="">None</option>';
+        contexts.forEach(function (ctx) {
+          var opt = document.createElement('option');
+          opt.value = ctx.id;
+          opt.textContent = ctx.name;
+          ctxSelect.appendChild(opt);
+        });
+        var activeCtx = (ps[platform] || {}).activeContext || '';
+        ctxSelect.value = activeCtx;
+      });
+
+      // Load priority targets with platform checkboxes
+      renderPriorityTargets(settings.priorityTargets || []);
     });
   }
 
   // ── Save settings ──
   saveBtn.addEventListener('click', function () {
+    var platformSettings = {};
+    ['linkedin', 'facebook', 'x', 'reddit'].forEach(function (platform) {
+      var thresholds = {};
+      if (platform === 'linkedin' || platform === 'facebook') {
+        thresholds.minReactions = parseInt(document.getElementById('ps-' + platform + '-minReactions').value, 10) || (platform === 'facebook' ? 30 : 50);
+        thresholds.minComments = parseInt(document.getElementById('ps-' + platform + '-minComments').value, 10) || (platform === 'facebook' ? 5 : 10);
+      } else if (platform === 'x') {
+        thresholds.minLikes = parseInt(document.getElementById('ps-x-minLikes').value, 10) || 100;
+        thresholds.minRetweets = parseInt(document.getElementById('ps-x-minRetweets').value, 10) || 20;
+      } else if (platform === 'reddit') {
+        thresholds.minUpvotes = parseInt(document.getElementById('ps-reddit-minUpvotes').value, 10) || 50;
+        thresholds.minComments = parseInt(document.getElementById('ps-reddit-minComments').value, 10) || 10;
+      }
+
+      var mentionVal = (document.getElementById('ps-' + platform + '-mentionPages').value || '').trim();
+      var mentionPages = mentionVal ? mentionVal.split('\n').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+
+      platformSettings[platform] = {
+        tone: (document.getElementById('ps-' + platform + '-tone') || {}).value || 'casual',
+        activeContext: (document.getElementById('ps-' + platform + '-activeContext') || {}).value || '',
+        interval: parseInt((document.getElementById('ps-' + platform + '-interval') || {}).value, 10) || 60,
+        autoSubmit: (document.getElementById('ps-' + platform + '-autoSubmit') || {}).checked !== false,
+        contentFilter: (document.getElementById('ps-' + platform + '-contentFilter') || {}).value || 'business',
+        stopLimit: parseInt((document.getElementById('ps-' + platform + '-stopLimit') || {}).value, 10) || 0,
+        engagementThresholds: thresholds,
+        mentionPages: mentionPages
+      };
+    });
+
     var data = {
       provider: providerSelect.value,
       apiKey: apiKeyInput.value,
@@ -185,24 +333,14 @@
       qwenModel: getModelValue(qwenModelSelect, qwenModelCustom, 'qwen-plus'),
       backendToken: backendTokenInput.value,
       contexts: contexts,
-      defaultTone: defaultToneSelect.value,
-      autoInterval: parseInt(document.getElementById('autoInterval').value, 10) || 60,
-      autoStopLimit: parseInt(document.getElementById('autoStopLimit').value, 10) || 0,
-      autoSubmit: document.getElementById('autoSubmit').checked,
-      contentFilter: document.getElementById('contentFilter').value,
-      engagementThresholds: {
-        linkedin:  { minReactions: parseInt(document.getElementById('eng-linkedin-reactions').value, 10) || 50, minComments: parseInt(document.getElementById('eng-linkedin-comments').value, 10) || 10 },
-        facebook:  { minReactions: parseInt(document.getElementById('eng-facebook-reactions').value, 10) || 30, minComments: parseInt(document.getElementById('eng-facebook-comments').value, 10) || 5 },
-        x:         { minLikes: parseInt(document.getElementById('eng-x-likes').value, 10) || 100, minRetweets: parseInt(document.getElementById('eng-x-retweets').value, 10) || 20 },
-        reddit:    { minUpvotes: parseInt(document.getElementById('eng-reddit-upvotes').value, 10) || 50, minComments: parseInt(document.getElementById('eng-reddit-comments').value, 10) || 10 }
-      },
-      priorityTargets: parseTargetText(document.getElementById('priorityTargets').value),
+      priorityTargets: collectPriorityTargets(),
       platforms: {
         linkedin: document.getElementById('platform-linkedin').checked,
         facebook: document.getElementById('platform-facebook').checked,
         x: document.getElementById('platform-x').checked,
         reddit: document.getElementById('platform-reddit').checked
-      }
+      },
+      platformSettings: platformSettings
     };
 
     chrome.runtime.sendMessage({ type: 'saveSettings', data: data }, function (response) {
