@@ -274,6 +274,17 @@ var TONE_GUIDES = {
   informative: 'Write to inform — clear, educational, with useful takeaways.'
 };
 
+var INSTRUCTION_PRESETS = {
+  use_emojis: 'Add relevant emojis to the message.',
+  ask_questions: 'End with a relevant question to encourage conversation.',
+  keep_short: 'Keep responses to 1-2 sentences maximum.',
+  use_hashtags: 'Include 2-3 relevant hashtags.',
+  be_empathetic: 'Show empathy toward the original author.',
+  include_cta: 'Add a clear call-to-action.',
+  avoid_jargon: 'Use plain everyday language, no jargon.',
+  professional: 'Maintain a professional, business-appropriate demeanor.'
+};
+
 var TASK_INSTRUCTIONS = {
   reply: 'Write a reply to the post or comment below. 3-4 sentences. Read the original content carefully and respond directly to what was said — do not ignore or skim over the key points.',
   comment: 'Write a comment on the post below. 3-4 sentences. Read the post content thoroughly, then add a meaningful perspective or real-world example that connects to what the author actually said.',
@@ -385,6 +396,8 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
 var DEFAULT_PLATFORM_SETTINGS = {
   tone: 'casual',
   activeContext: '',
+  instructionPresets: [],
+  customInstructions: '',
   interval: 60,
   autoSubmit: true,
   contentFilter: 'business',
