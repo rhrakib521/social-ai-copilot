@@ -1447,6 +1447,9 @@
         }
       }
 
+      var autoInstructionPresets = ps.instructionPresets || [];
+      var autoCustomInstructions = ps.customInstructions || '';
+
       var task = self.config.contentFilter === 'business' ? 'auto_classify_comment' : 'quick_reply';
       chrome.runtime.sendMessage({
         type: 'generate', data: {
@@ -1457,8 +1460,8 @@
           personality: platformConfig.personality,
           contextInfo: contextInfo,
           mentionPages: self.config.autoMentionPages || [],
-          instructionPresets: instructionPresets,
-          customInstructions: customInstructions
+          instructionPresets: autoInstructionPresets,
+          customInstructions: autoCustomInstructions
         }
       }, function (response) {
         if (chrome.runtime.lastError) { console.log('[SAIC-Auto] Error:', chrome.runtime.lastError.message); callback(null); return; }
