@@ -1456,7 +1456,9 @@
           context: context,
           personality: platformConfig.personality,
           contextInfo: contextInfo,
-          mentionPages: self.config.autoMentionPages || []
+          mentionPages: self.config.autoMentionPages || [],
+          instructionPresets: instructionPresets,
+          customInstructions: customInstructions
         }
       }, function (response) {
         if (chrome.runtime.lastError) { console.log('[SAIC-Auto] Error:', chrome.runtime.lastError.message); callback(null); return; }
