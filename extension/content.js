@@ -692,6 +692,9 @@
     var toneSelect = document.createElement('select');
     toneSelect.className = 'saic-tone-select';
     var defaultTone = ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {}).tone || 'casual';
+    var platformInstr = ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {});
+    var instructionPresets = platformInstr.instructionPresets || [];
+    var customInstructions = platformInstr.customInstructions || '';
     ['casual', 'funny', 'informative'].forEach(function (t) {
       var opt = document.createElement('option');
       opt.value = t;
@@ -857,7 +860,9 @@
           tone: toneSelect.value,
           context: postContext,
           personality: platformConfig.personality,
-          contextInfo: selectedCtxTexts.join('\n')
+          contextInfo: selectedCtxTexts.join('\n'),
+          instructionPresets: instructionPresets,
+          customInstructions: customInstructions
         }
       }, function (response) {
         if (chrome.runtime.lastError) {
@@ -945,7 +950,9 @@
         tone: tone,
         context: context,
         personality: platformConfig.personality,
-        contextInfo: contextInfo
+        contextInfo: contextInfo,
+        instructionPresets: instructionPresets,
+        customInstructions: customInstructions
       }
     }, function (response) {
       if (chrome.runtime.lastError) {
