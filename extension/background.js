@@ -443,7 +443,19 @@ var DEFAULT_SETTINGS = {
 };
 
 function migrateSettings(stored) {
-  if (stored.platformSettings) return stored;
+  if (stored.platformSettings) {
+    var platforms = ['linkedin', 'facebook', 'x', 'reddit'];
+    platforms.forEach(function (p) {
+      if (!stored.platformSettings[p]) return;
+      if (!stored.platformSettings[p].instructionPresets) {
+        stored.platformSettings[p].instructionPresets = [];
+      }
+      if (stored.platformSettings[p].customInstructions === undefined) {
+        stored.platformSettings[p].customInstructions = '';
+      }
+    });
+    return stored;
+  }
 
   var ps = {};
   var platforms = ['linkedin', 'facebook', 'x', 'reddit'];
