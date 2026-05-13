@@ -415,6 +415,7 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
   if (task === 'grammar') maxTokens = 400;
   if (task === 'rewrite') maxTokens = 300;
   if (task === 'auto_classify_comment') maxTokens = 150;
+  if (task === 'reddit_auto_comment') maxTokens = 250;
 
   return {
     messages: [
