@@ -281,6 +281,29 @@
           if (uEl) uEl.value = thresholds.minUpvotes || 50;
           var rcEl = document.getElementById('ps-reddit-minComments');
           if (rcEl) rcEl.value = thresholds.minComments || 10;
+          // Reddit-specific fields
+          var targetSubs = document.getElementById('ps-reddit-targetSubreddits');
+          if (targetSubs) targetSubs.value = (p.targetSubreddits || []).join('\n');
+          var blackSubs = document.getElementById('ps-reddit-blacklistSubreddits');
+          if (blackSubs) blackSubs.value = (p.blacklistSubreddits || []).join('\n');
+          var autoDetect = document.getElementById('ps-reddit-autoDetectGenre');
+          if (autoDetect) autoDetect.checked = p.autoDetectGenre !== false;
+          var bizName = document.getElementById('ps-reddit-businessName');
+          if (bizName) bizName.value = p.businessName || '';
+          var bizDesc = document.getElementById('ps-reddit-businessDescription');
+          if (bizDesc) bizDesc.value = p.businessDescription || '';
+          var freqSlider = document.getElementById('ps-reddit-mentionFrequency');
+          if (freqSlider) { freqSlider.value = p.mentionFrequency !== undefined ? p.mentionFrequency : 15; }
+          var freqVal = document.getElementById('ps-reddit-mentionFrequencyValue');
+          if (freqVal) freqVal.textContent = freqSlider ? freqSlider.value : '15';
+          var rateSlider = document.getElementById('ps-reddit-maxCommentsPerHour');
+          if (rateSlider) { rateSlider.value = p.maxCommentsPerHour || 3; }
+          var rateVal = document.getElementById('ps-reddit-maxCommentsPerHourValue');
+          if (rateVal) rateVal.textContent = rateSlider ? rateSlider.value : '3';
+          var skipNew = document.getElementById('ps-reddit-skipNewPostsMinutes');
+          if (skipNew) skipNew.value = p.skipNewPostsMinutes || 60;
+          var skipBot = document.getElementById('ps-reddit-skipBotRestrictedSubs');
+          if (skipBot) skipBot.checked = p.skipBotRestrictedSubs !== false;
         }
       });
 
@@ -343,6 +366,23 @@
         engagementThresholds: thresholds,
         mentionPages: mentionPages
       };
+
+      // Reddit-specific fields
+      if (platform === 'reddit') {
+        var targetSubsVal = (document.getElementById('ps-reddit-targetSubreddits').value || '').trim();
+        var targetSubs = targetSubsVal ? targetSubsVal.split('\n').map(function (s) { return s.trim().replace(/^r\//, ''); }).filter(Boolean) : [];
+        var blackSubsVal = (document.getElementById('ps-reddit-blacklistSubreddits').value || '').trim();
+        var blackSubs = blackSubsVal ? blackSubsVal.split('\n').map(function (s) { return s.trim().replace(/^r\//, ''); }).filter(Boolean) : [];
+        platformSettings[platform].targetSubreddits = targetSubs;
+        platformSettings[platform].blacklistSubreddits = blackSubs;
+        platformSettings[platform].autoDetectGenre = document.getElementById('ps-reddit-autoDetectGenre').checked;
+        platformSettings[platform].businessName = (document.getElementById('ps-reddit-businessName').value || '').trim();
+        platformSettings[platform].businessDescription = (document.getElementById('ps-reddit-businessDescription').value || '').trim();
+        platformSettings[platform].mentionFrequency = parseInt(document.getElementById('ps-reddit-mentionFrequency').value, 10) || 15;
+        platformSettings[platform].maxCommentsPerHour = parseInt(document.getElementById('ps-reddit-maxCommentsPerHour').value, 10) || 3;
+        platformSettings[platform].skipNewPostsMinutes = parseInt(document.getElementById('ps-reddit-skipNewPostsMinutes').value, 10) || 60;
+        platformSettings[platform].skipBotRestrictedSubs = document.getElementById('ps-reddit-skipBotRestrictedSubs').checked;
+      }
     });
 
     var data = {
@@ -372,6 +412,18 @@
       }
     });
   });
+
+  // Reddit slider value displays
+  var freqSlider = document.getElementById('ps-reddit-mentionFrequency');
+  var freqValue = document.getElementById('ps-reddit-mentionFrequencyValue');
+  if (freqSlider && freqValue) {
+    freqSlider.addEventListener('input', function () { freqValue.textContent = freqSlider.value; });
+  }
+  var rateSlider = document.getElementById('ps-reddit-maxCommentsPerHour');
+  var rateValue = document.getElementById('ps-reddit-maxCommentsPerHourValue');
+  if (rateSlider && rateValue) {
+    rateSlider.addEventListener('input', function () { rateValue.textContent = rateSlider.value; });
+  }
 
   // ── Load history ──
   function loadHistory() {

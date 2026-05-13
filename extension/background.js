@@ -296,10 +296,11 @@ var TASK_INSTRUCTIONS = {
   expand: 'Expand on the ideas in the text provided in the context below. Add more detail and depth.',
   grammar: 'Fix any grammar, spelling, punctuation, or phrasing errors in the text. Return only the corrected version.',
   summarize: 'Summarize the post or text provided in the context below concisely.',
-  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Do NOT address the author by name. Make it feel personal and genuine.'
+  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Do NOT address the author by name. Make it feel personal and genuine.',
+  reddit_auto_comment: 'STEP 1 — CLASSIFY: Read the post. Is it about SaaS, e-commerce, startups, business, marketing, product development, entrepreneurship, tech tools, or business problems/solutions? If clearly personal (memes, hobbies, gossip, politics, personal life), respond with exactly and only the word SKIP.\nSTEP 2 — SAFETY CHECK: Is this post controversial, a heated debate, political, or emotionally charged? If yes, respond with exactly and only the word SKIP.\nSTEP 3 — COMMENT: Write a helpful, genuine comment. Keep it 3-4 lines normally, 6-7 lines when naturally sharing a longer experience. Sound like a real Redditor who genuinely wants to help. Match the subreddit vibe. Offer specific advice, share relevant experience, or ask a thoughtful follow-up. NO marketing language, NO pitches, NO call-to-action. Use simple conversational English, like chatting with a peer. Start naturally — react to what they said, never start with generic praise. Do NOT address the author by name.'
 };
 
-function buildPrompt(platform, task, tone, context, personality, contextInfo, mentionPages, instructionPresets, customInstructions) {
+function buildPrompt(platform, task, tone, context, personality, contextInfo, mentionPages, instructionPresets, customInstructions, mentionMode) {
   var toneGuide = TONE_GUIDES[tone] || TONE_GUIDES.casual;
   var taskInstruction = TASK_INSTRUCTIONS[task] || TASK_INSTRUCTIONS.reply;
 
@@ -313,6 +314,18 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
     '',
     'Tone: ' + toneGuide
   ];
+
+  // Reddit business mention injection
+  if (mentionMode && mentionMode.active) {
+    systemLines.push('');
+    systemLines.push('BUSINESS MENTION MODE ACTIVE:');
+    systemLines.push('This post is asking for recommendations, expressing frustration with a solution, or asking how to do something your business covers.');
+    systemLines.push('You may briefly mention your experience with ' + (mentionMode.businessName || 'our tool') + ' as a personal anecdote. For example: "I switched to ' + (mentionMode.businessName || 'our tool') + ' a while back and it handles X pretty well" or "we use ' + (mentionMode.businessName || 'our tool') + ' for this at our startup".');
+    systemLines.push('Keep it casual, like a side note in a helpful comment. The mention should be 1 line within a 6-7 line comment. The rest must be genuinely helpful advice.');
+    if (mentionMode.businessDescription) {
+      systemLines.push('Business: ' + mentionMode.businessName + ' — ' + mentionMode.businessDescription);
+    }
+  }
 
   // Inject user context — force the AI to internalize and apply it
   if (contextInfo && contextInfo.trim()) {
@@ -402,6 +415,7 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
   if (task === 'grammar') maxTokens = 400;
   if (task === 'rewrite') maxTokens = 300;
   if (task === 'auto_classify_comment') maxTokens = 150;
+  if (task === 'reddit_auto_comment') maxTokens = 250;
 
   return {
     messages: [
@@ -458,7 +472,16 @@ var DEFAULT_SETTINGS = {
     },
     reddit: {
       ...DEFAULT_PLATFORM_SETTINGS,
-      engagementThresholds: { minUpvotes: 50, minComments: 10 }
+      engagementThresholds: { minUpvotes: 50, minComments: 10 },
+      targetSubreddits: [],
+      blacklistSubreddits: [],
+      autoDetectGenre: true,
+      businessName: '',
+      businessDescription: '',
+      mentionFrequency: 15,
+      maxCommentsPerHour: 3,
+      skipNewPostsMinutes: 60,
+      skipBotRestrictedSubs: true
     }
   }
 };
@@ -473,6 +496,18 @@ function migrateSettings(stored) {
       }
       if (stored.platformSettings[p].customInstructions === undefined) {
         stored.platformSettings[p].customInstructions = '';
+      }
+      // Reddit-specific migration
+      if (p === 'reddit') {
+        if (!stored.platformSettings[p].targetSubreddits) stored.platformSettings[p].targetSubreddits = [];
+        if (!stored.platformSettings[p].blacklistSubreddits) stored.platformSettings[p].blacklistSubreddits = [];
+        if (stored.platformSettings[p].autoDetectGenre === undefined) stored.platformSettings[p].autoDetectGenre = true;
+        if (stored.platformSettings[p].businessName === undefined) stored.platformSettings[p].businessName = '';
+        if (stored.platformSettings[p].businessDescription === undefined) stored.platformSettings[p].businessDescription = '';
+        if (stored.platformSettings[p].mentionFrequency === undefined) stored.platformSettings[p].mentionFrequency = 15;
+        if (stored.platformSettings[p].maxCommentsPerHour === undefined) stored.platformSettings[p].maxCommentsPerHour = 3;
+        if (stored.platformSettings[p].skipNewPostsMinutes === undefined) stored.platformSettings[p].skipNewPostsMinutes = 60;
+        if (stored.platformSettings[p].skipBotRestrictedSubs === undefined) stored.platformSettings[p].skipBotRestrictedSubs = true;
       }
     });
     return stored;
@@ -547,7 +582,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           data.contextInfo || '',
           data.mentionPages || [],
           data.instructionPresets || [],
-          data.customInstructions || ''
+          data.customInstructions || '',
+          data.mentionMode
         );
 
         var providerOptions = {

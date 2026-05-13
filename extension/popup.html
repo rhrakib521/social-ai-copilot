@@ -751,6 +751,44 @@
       <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Pages to @mention in auto-comments. One per line.</p>
       <textarea id="ps-reddit-mentionPages" rows="3" placeholder="Periscale" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;"></textarea>
     </div>
+    <div class="section">
+      <div class="section-title">Subreddit Targeting</div>
+      <label for="ps-reddit-targetSubreddits" style="font-size:11px;">Target subreddits (one per line, without r/)</label>
+      <textarea id="ps-reddit-targetSubreddits" rows="3" placeholder="SaaS&#10;startups&#10;ecommerce&#10;Entrepreneur" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;box-sizing:border-box;"></textarea>
+      <label for="ps-reddit-blacklistSubreddits" style="font-size:11px;margin-top:8px;">Blacklist subreddits (never comment in these)</label>
+      <textarea id="ps-reddit-blacklistSubreddits" rows="2" placeholder="PoliticalDiscussion&#10;dankmemes" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#1e293b;font-family:inherit;resize:vertical;box-sizing:border-box;"></textarea>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-autoDetectGenre" style="font-size:11px;">Auto-detect genre beyond whitelist</label>
+        <label class="toggle"><input type="checkbox" id="ps-reddit-autoDetectGenre" checked><span class="toggle-slider"></span></label>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Business Identity</div>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:8px;">Used for rare subtle mentions positioned as personal experience.</p>
+      <label for="ps-reddit-businessName" style="font-size:11px;">Business name</label>
+      <input type="text" id="ps-reddit-businessName" placeholder="e.g. Periscale" style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;box-sizing:border-box;">
+      <label for="ps-reddit-businessDescription" style="font-size:11px;margin-top:8px;">What does it do? (1-2 sentences)</label>
+      <textarea id="ps-reddit-businessDescription" rows="2" placeholder="AI-powered social media automation tool for businesses" style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;resize:vertical;box-sizing:border-box;"></textarea>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-mentionFrequency" style="font-size:11px;">Mention frequency: <span id="ps-reddit-mentionFrequencyValue">15</span>%</label>
+        <input type="range" id="ps-reddit-mentionFrequency" min="0" max="100" value="15" style="width:100%;">
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Safety Settings</div>
+      <div class="toggle-row">
+        <label for="ps-reddit-maxCommentsPerHour" style="font-size:11px;">Max comments/hour: <span id="ps-reddit-maxCommentsPerHourValue">3</span></label>
+        <input type="range" id="ps-reddit-maxCommentsPerHour" min="1" max="10" value="3" style="width:100%;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-skipNewPostsMinutes" style="font-size:11px;">Skip posts newer than (minutes)</label>
+        <input type="number" id="ps-reddit-skipNewPostsMinutes" min="10" max="1440" value="60" style="width:70px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#1e293b;text-align:center;">
+      </div>
+      <div class="toggle-row" style="margin-top:8px;">
+        <label for="ps-reddit-skipBotRestrictedSubs" style="font-size:11px;">Auto-skip bot-restricted subreddits</label>
+        <label class="toggle"><input type="checkbox" id="ps-reddit-skipBotRestrictedSubs" checked><span class="toggle-slider"></span></label>
+      </div>
+    </div>
   </div>
 
   <button class="save-btn" id="saveBtn">Save Settings</button>
