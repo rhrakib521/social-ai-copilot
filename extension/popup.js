@@ -252,6 +252,18 @@
         var mentionEl = document.getElementById('ps-' + platform + '-mentionPages');
         if (mentionEl) mentionEl.value = (p.mentionPages || []).join('\n');
 
+        // Load instruction presets
+        var PRESET_IDS = ['use_emojis', 'ask_questions', 'keep_short', 'use_hashtags', 'be_empathetic', 'include_cta', 'avoid_jargon', 'professional'];
+        var activePresets = p.instructionPresets || [];
+        PRESET_IDS.forEach(function (presetId) {
+          var cb = document.getElementById('ps-' + platform + '-preset-' + presetId);
+          if (cb) cb.checked = activePresets.indexOf(presetId) !== -1;
+        });
+
+        // Load custom instructions
+        var customEl = document.getElementById('ps-' + platform + '-customInstructions');
+        if (customEl) customEl.value = p.customInstructions || '';
+
         // Platform-specific thresholds
         var thresholds = p.engagementThresholds || {};
         if (platform === 'linkedin' || platform === 'facebook') {
@@ -314,6 +326,16 @@
       platformSettings[platform] = {
         tone: (document.getElementById('ps-' + platform + '-tone') || {}).value || 'casual',
         activeContext: (document.getElementById('ps-' + platform + '-activeContext') || {}).value || '',
+        instructionPresets: (function () {
+          var PRESET_IDS = ['use_emojis', 'ask_questions', 'keep_short', 'use_hashtags', 'be_empathetic', 'include_cta', 'avoid_jargon', 'professional'];
+          var checked = [];
+          PRESET_IDS.forEach(function (presetId) {
+            var cb = document.getElementById('ps-' + platform + '-preset-' + presetId);
+            if (cb && cb.checked) checked.push(presetId);
+          });
+          return checked;
+        })(),
+        customInstructions: (document.getElementById('ps-' + platform + '-customInstructions') || {}).value || '',
         interval: parseInt((document.getElementById('ps-' + platform + '-interval') || {}).value, 10) || 60,
         autoSubmit: (document.getElementById('ps-' + platform + '-autoSubmit') || {}).checked !== false,
         contentFilter: (document.getElementById('ps-' + platform + '-contentFilter') || {}).value || 'business',

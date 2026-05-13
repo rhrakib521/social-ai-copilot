@@ -692,6 +692,9 @@
     var toneSelect = document.createElement('select');
     toneSelect.className = 'saic-tone-select';
     var defaultTone = ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {}).tone || 'casual';
+    var platformInstr = ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {});
+    var instructionPresets = platformInstr.instructionPresets || [];
+    var customInstructions = platformInstr.customInstructions || '';
     ['casual', 'funny', 'informative'].forEach(function (t) {
       var opt = document.createElement('option');
       opt.value = t;
@@ -857,7 +860,9 @@
           tone: toneSelect.value,
           context: postContext,
           personality: platformConfig.personality,
-          contextInfo: selectedCtxTexts.join('\n')
+          contextInfo: selectedCtxTexts.join('\n'),
+          instructionPresets: instructionPresets,
+          customInstructions: customInstructions
         }
       }, function (response) {
         if (chrome.runtime.lastError) {
@@ -945,7 +950,9 @@
         tone: tone,
         context: context,
         personality: platformConfig.personality,
-        contextInfo: contextInfo
+        contextInfo: contextInfo,
+        instructionPresets: instructionPresets,
+        customInstructions: customInstructions
       }
     }, function (response) {
       if (chrome.runtime.lastError) {
@@ -1440,6 +1447,9 @@
         }
       }
 
+      var autoInstructionPresets = ps.instructionPresets || [];
+      var autoCustomInstructions = ps.customInstructions || '';
+
       var task = self.config.contentFilter === 'business' ? 'auto_classify_comment' : 'quick_reply';
       chrome.runtime.sendMessage({
         type: 'generate', data: {
@@ -1449,7 +1459,9 @@
           context: context,
           personality: platformConfig.personality,
           contextInfo: contextInfo,
-          mentionPages: self.config.autoMentionPages || []
+          mentionPages: self.config.autoMentionPages || [],
+          instructionPresets: autoInstructionPresets,
+          customInstructions: autoCustomInstructions
         }
       }, function (response) {
         if (chrome.runtime.lastError) { console.log('[SAIC-Auto] Error:', chrome.runtime.lastError.message); callback(null); return; }

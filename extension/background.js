@@ -274,6 +274,17 @@ var TONE_GUIDES = {
   informative: 'Write to inform — clear, educational, with useful takeaways.'
 };
 
+var INSTRUCTION_PRESETS = {
+  use_emojis: 'Add relevant emojis to the message.',
+  ask_questions: 'End with a relevant question to encourage conversation.',
+  keep_short: 'Keep responses to 1-2 sentences maximum.',
+  use_hashtags: 'Include 2-3 relevant hashtags.',
+  be_empathetic: 'Show empathy toward the original author.',
+  include_cta: 'Add a clear call-to-action.',
+  avoid_jargon: 'Use plain everyday language, no jargon.',
+  professional: 'Maintain a professional, business-appropriate demeanor.'
+};
+
 var TASK_INSTRUCTIONS = {
   reply: 'Write a reply to the post or comment below. 3-4 sentences. Read the original content carefully and respond directly to what was said — do not ignore or skim over the key points.',
   comment: 'Write a comment on the post below. 3-4 sentences. Read the post content thoroughly, then add a meaningful perspective or real-world example that connects to what the author actually said.',
@@ -288,7 +299,7 @@ var TASK_INSTRUCTIONS = {
   auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Do NOT address the author by name. Make it feel personal and genuine.'
 };
 
-function buildPrompt(platform, task, tone, context, personality, contextInfo, mentionPages) {
+function buildPrompt(platform, task, tone, context, personality, contextInfo, mentionPages, instructionPresets, customInstructions) {
   var toneGuide = TONE_GUIDES[tone] || TONE_GUIDES.casual;
   var taskInstruction = TASK_INSTRUCTIONS[task] || TASK_INSTRUCTIONS.reply;
 
@@ -309,6 +320,27 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
     systemLines.push('IMPORTANT — Context profile you MUST embody and write through:');
     systemLines.push(contextInfo.trim());
     systemLines.push('Everything you write must reflect the above profile. Do not ignore any part of it.');
+  }
+
+  // Inject enabled instruction presets
+  if (instructionPresets && instructionPresets.length > 0) {
+    systemLines.push('');
+    systemLines.push('Writing instructions:');
+    instructionPresets.forEach(function (presetId) {
+      if (INSTRUCTION_PRESETS[presetId]) {
+        systemLines.push('- ' + INSTRUCTION_PRESETS[presetId]);
+      }
+    });
+  }
+
+  // Inject custom instructions (token-limited to ~250 tokens / ~1000 chars)
+  if (customInstructions && customInstructions.trim()) {
+    var truncated = customInstructions.trim();
+    if (truncated.length > 1000) {
+      truncated = truncated.substring(0, 1000);
+    }
+    systemLines.push('');
+    systemLines.push('Additional instructions: ' + truncated);
   }
 
   systemLines.push(
@@ -385,6 +417,8 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
 var DEFAULT_PLATFORM_SETTINGS = {
   tone: 'casual',
   activeContext: '',
+  instructionPresets: [],
+  customInstructions: '',
   interval: 60,
   autoSubmit: true,
   contentFilter: 'business',
@@ -430,7 +464,19 @@ var DEFAULT_SETTINGS = {
 };
 
 function migrateSettings(stored) {
-  if (stored.platformSettings) return stored;
+  if (stored.platformSettings) {
+    var platforms = ['linkedin', 'facebook', 'x', 'reddit'];
+    platforms.forEach(function (p) {
+      if (!stored.platformSettings[p]) return;
+      if (!stored.platformSettings[p].instructionPresets) {
+        stored.platformSettings[p].instructionPresets = [];
+      }
+      if (stored.platformSettings[p].customInstructions === undefined) {
+        stored.platformSettings[p].customInstructions = '';
+      }
+    });
+    return stored;
+  }
 
   var ps = {};
   var platforms = ['linkedin', 'facebook', 'x', 'reddit'];
@@ -499,7 +545,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           data.context,
           data.personality,
           data.contextInfo || '',
-          data.mentionPages || []
+          data.mentionPages || [],
+          data.instructionPresets || [],
+          data.customInstructions || ''
         );
 
         var providerOptions = {
