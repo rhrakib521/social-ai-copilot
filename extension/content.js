@@ -1172,6 +1172,7 @@
       bgClear(this._cdBgTimer);
       clearInterval(this.countdownInterval);
       this.loadConfig();
+      if (platformName === 'reddit') RedditAutoEngine.loadConfig();
       this.state = 'running';
       this.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
       this.processedPosts = new Set();
@@ -1276,6 +1277,12 @@
           if (self.state !== 'running') return;
           self.scheduleNextCycle(jitter(3000, 0.3));
         });
+        return;
+      }
+      // Delegate to RedditAutoEngine for Reddit-specific processing
+      if (platformName === 'reddit') {
+        RedditAutoEngine.loadConfig();
+        RedditAutoEngine.processRedditPost(bestPost, bestReason);
         return;
       }
       self.processPost(bestPost, bestReason);
@@ -2149,6 +2156,407 @@
       this.loadConfig();
       this.createPanel();
       console.log('[SAIC-Auto] Panel created for ' + platformName + ' - ' + this.config.priorityTargets.length + ' targets');
+    }
+  };
+
+  // ══════════════════════════════════════════════════
+  // ── Reddit Automation Engine ──
+  // ══════════════════════════════════════════════════
+
+  var RedditAutoEngine = {
+    commentTimestamps: [],
+    blockedSubreddits: new Set(),
+    recentOpenings: [],
+    mentionCount: 0,
+    totalComments: 0,
+    coffeeBreakAfter: 0,
+    coffeeBreakCounter: 0,
+    config: {},
+
+    loadConfig: function () {
+      var settings = savedSettings || {};
+      var ps = (settings.platformSettings && settings.platformSettings.reddit) || {};
+      this.config = {
+        targetSubreddits: (ps.targetSubreddits || []).map(function (s) { return s.toLowerCase().replace(/^r\//, ''); }),
+        blacklistSubreddits: (ps.blacklistSubreddits || []).map(function (s) { return s.toLowerCase().replace(/^r\//, ''); }),
+        autoDetectGenre: ps.autoDetectGenre !== false,
+        businessName: ps.businessName || '',
+        businessDescription: ps.businessDescription || '',
+        mentionFrequency: ps.mentionFrequency !== undefined ? ps.mentionFrequency : 15,
+        maxCommentsPerHour: ps.maxCommentsPerHour || 3,
+        skipNewPostsMinutes: ps.skipNewPostsMinutes || 60,
+        skipBotRestrictedSubs: ps.skipBotRestrictedSubs !== false,
+        interval: Math.max(60, Math.min(300, ps.interval || 90)),
+        stopLimit: ps.stopLimit || 0,
+        autoSubmit: ps.autoSubmit !== false
+      };
+      this.coffeeBreakAfter = 3 + Math.floor(Math.random() * 3);
+    },
+
+    extractSubreddit: function (postEl) {
+      if (!platformConfig || !platformConfig.subredditSelector) return '';
+      var subEl = postEl.querySelector(platformConfig.subredditSelector);
+      if (!subEl) {
+        var parent = postEl.parentElement;
+        if (parent) subEl = parent.querySelector(platformConfig.subredditSelector);
+      }
+      if (!subEl) return '';
+      var href = (subEl.getAttribute('href') || '').toLowerCase();
+      var match = href.match(/\/r\/([a-zA-Z0-9_]+)/);
+      return match ? match[1].toLowerCase() : '';
+    },
+
+    isSubredditTarget: function (subreddit) {
+      if (!subreddit) return false;
+      if (this.config.blacklistSubreddits.indexOf(subreddit) !== -1) return false;
+      if (this.blockedSubreddits.has(subreddit)) return false;
+      if (this.config.targetSubreddits.length > 0 && this.config.targetSubreddits.indexOf(subreddit) !== -1) return true;
+      if (this.config.targetSubreddits.length === 0 && this.config.autoDetectGenre) return true;
+      if (this.config.autoDetectGenre) return true;
+      return false;
+    },
+
+    checkSubredditCooldown: function (subreddit) {
+      var now = Date.now();
+      var oneHourAgo = now - 3600000;
+      var subCount = 0;
+      for (var i = 0; i < this.commentTimestamps.length; i++) {
+        if (this.commentTimestamps[i].subreddit === subreddit && this.commentTimestamps[i].timestamp > oneHourAgo) {
+          subCount++;
+        }
+      }
+      if (subCount >= 2) return false;
+      if (this.commentTimestamps.length > 0) {
+        var lastSub = this.commentTimestamps[this.commentTimestamps.length - 1].subreddit;
+        if (lastSub === subreddit) {
+          if (this.config.targetSubreddits.length <= 1) {
+            var lastTime = this.commentTimestamps[this.commentTimestamps.length - 1].timestamp;
+            if (now - lastTime < 300000) return false;
+          } else {
+            return false;
+          }
+        }
+      }
+      return true;
+    },
+
+    checkRateLimit: function () {
+      var now = Date.now();
+      var oneHourAgo = now - 3600000;
+      this.commentTimestamps = this.commentTimestamps.filter(function (t) { return t.timestamp > oneHourAgo; });
+      return this.commentTimestamps.length < this.config.maxCommentsPerHour;
+    },
+
+    checkSubredditRules: function (subreddit, callback) {
+      var self = this;
+      if (!self.config.skipBotRestrictedSubs) { callback(true); return; }
+      if (self.blockedSubreddits.has(subreddit)) { callback(false); return; }
+      var BOT_KEYWORDS = ['no bots', 'no automated', 'no ai', 'no self-promo', 'human only', 'manual posts only', 'no automated posting', 'bot-free'];
+      var sidebarEl = document.querySelector('.sidebar, .side, [data-testid="sidebar"], .reddit-sidebar');
+      if (!sidebarEl) sidebarEl = document.querySelector('.rules-page, [data-testid="rules"]');
+      if (sidebarEl) {
+        var rulesText = (sidebarEl.innerText || '').toLowerCase();
+        for (var i = 0; i < BOT_KEYWORDS.length; i++) {
+          if (rulesText.indexOf(BOT_KEYWORDS[i]) !== -1) {
+            self.blockedSubreddits.add(subreddit);
+            AutomationEngine.addLog('Blocked subreddit: r/' + subreddit + ' (bot restriction detected)');
+            callback(false);
+            return;
+          }
+        }
+      }
+      callback(true);
+    },
+
+    shouldMentionBusiness: function () {
+      if (!this.config.businessName) return false;
+      if (this.totalComments === 0) return false;
+      var mentionRate = (this.mentionCount / this.totalComments) * 100;
+      if (mentionRate >= this.config.mentionFrequency) return false;
+      return true;
+    },
+
+    getRedditDelay: function () {
+      var base = this.config.interval * 1000;
+      var multiplier = 0.7 + Math.random() * 0.9;
+      var delay = base * multiplier;
+      delay = jitter(delay, 0.2);
+      this.coffeeBreakCounter++;
+      if (this.coffeeBreakCounter >= this.coffeeBreakAfter) {
+        var breakMs = jitter(randomBetween(180000, 480000), 0.2);
+        AutomationEngine.addLog('Coffee break: ' + Math.round(breakMs / 1000) + 's');
+        delay += breakMs;
+        this.coffeeBreakCounter = 0;
+        this.coffeeBreakAfter = 3 + Math.floor(Math.random() * 3);
+      }
+      return delay;
+    },
+
+    redditTypeChars: function (field, text, callback) {
+      var self = this;
+      var words = text.split(/(\s+)/);
+      var wordIdx = 0;
+      var charIdx = 0;
+      var currentWord = '';
+
+      function typeNextChar() {
+        if (AutomationEngine.state !== 'running') { callback(); return; }
+        if (wordIdx >= words.length) { callback(); return; }
+        if (charIdx === 0) currentWord = words[wordIdx];
+        if (charIdx >= currentWord.length) {
+          wordIdx++;
+          charIdx = 0;
+          bgTimeout(typeNextChar, jitter(randomBetween(30, 80), 0.2));
+          return;
+        }
+        var char = currentWord[charIdx];
+        var delay = jitter(randomBetween(50, 180), 0.3);
+        if (Math.random() < 0.15 && charIdx > 0 && charIdx < currentWord.length - 1) {
+          delay += jitter(randomBetween(200, 500), 0.2);
+        }
+
+        // Typo simulation: ~3% per word
+        if (charIdx > 0 && charIdx < currentWord.length - 1 && Math.random() < 0.03) {
+          var wrongChar = String.fromCharCode(char.charCodeAt(0) + (Math.random() < 0.5 ? 1 : -1));
+          field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: wrongChar }));
+          if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
+            var start = field.selectionStart;
+            var val = field.value;
+            field.value = val.substring(0, start) + wrongChar + val.substring(start);
+            field.selectionStart = field.selectionEnd = start + 1;
+          } else {
+            document.execCommand('insertText', false, wrongChar);
+          }
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: wrongChar }));
+          bgTimeout(function () {
+            field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Backspace' }));
+            if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
+              var pos = field.selectionStart - 1;
+              field.value = field.value.substring(0, pos) + field.value.substring(pos + 1);
+              field.selectionStart = field.selectionEnd = pos;
+            } else {
+              document.execCommand('delete');
+            }
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Backspace' }));
+            bgTimeout(function () {
+              field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: char }));
+              if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
+                var s = field.selectionStart;
+                var v = field.value;
+                field.value = v.substring(0, s) + char + v.substring(s);
+                field.selectionStart = field.selectionEnd = s + 1;
+              } else {
+                document.execCommand('insertText', false, char);
+              }
+              field.dispatchEvent(new Event('input', { bubbles: true }));
+              field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: char }));
+              charIdx++;
+              bgTimeout(typeNextChar, delay);
+            }, jitter(randomBetween(200, 400), 0.2));
+          }, jitter(randomBetween(200, 400), 0.2));
+          return;
+        }
+
+        field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: char }));
+        if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
+          var s = field.selectionStart;
+          var v = field.value;
+          field.value = v.substring(0, s) + char + v.substring(s);
+          field.selectionStart = field.selectionEnd = s + 1;
+        } else {
+          document.execCommand('insertText', false, char);
+        }
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: char }));
+        charIdx++;
+        if (char === '.' || char === '!' || char === '?') delay += jitter(randomBetween(400, 800), 0.2);
+        bgTimeout(typeNextChar, delay);
+      }
+      typeNextChar();
+    },
+
+    redditClick: function (el, callback) {
+      var rect = el.getBoundingClientRect();
+      var cx = rect.left + rect.width * (0.3 + Math.random() * 0.4) + randomBetween(-3, 3);
+      var cy = rect.top + rect.height * (0.3 + Math.random() * 0.4) + randomBetween(-3, 3);
+      document.dispatchEvent(new MouseEvent('mouseover', { clientX: cx, clientY: cy, bubbles: true }));
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: cx, clientY: cy, bubbles: true }));
+      bgTimeout(function () {
+        el.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, bubbles: true }));
+        bgTimeout(function () {
+          el.dispatchEvent(new MouseEvent('mouseup', { clientX: cx, clientY: cy, bubbles: true }));
+          el.dispatchEvent(new MouseEvent('click', { clientX: cx, clientY: cy, bubbles: true }));
+          if (callback) bgTimeout(callback, jitter(randomBetween(100, 300), 0.2));
+        }, jitter(randomBetween(40, 100), 0.2));
+      }, jitter(randomBetween(50, 150), 0.2));
+    },
+
+    isDuplicateOpening: function (commentText) {
+      if (!commentText) return false;
+      var firstWords = commentText.trim().split(/\s+/).slice(0, 5).join(' ').toLowerCase();
+      for (var i = 0; i < this.recentOpenings.length; i++) {
+        if (this.recentOpenings[i] === firstWords) return true;
+      }
+      return false;
+    },
+
+    recordOpening: function (commentText) {
+      if (!commentText) return;
+      var firstWords = commentText.trim().split(/\s+/).slice(0, 5).join(' ').toLowerCase();
+      this.recentOpenings.push(firstWords);
+      if (this.recentOpenings.length > 10) this.recentOpenings.shift();
+    },
+
+    processRedditPost: function (postEl, reason) {
+      var self = this;
+      if (AutomationEngine.state !== 'running') return;
+      var postId = AutomationEngine.getPostFingerprint(postEl);
+      AutomationEngine.processedPosts.add(postId);
+      AutomationEngine.stats.postsScanned++;
+      AutomationEngine.addLog(reason || 'Processing Reddit post');
+
+      var subreddit = self.extractSubreddit(postEl);
+      if (!self.isSubredditTarget(subreddit)) {
+        AutomationEngine.stats.postsSkipped++;
+        AutomationEngine.addLog('Skipped: subreddit r/' + (subreddit || 'unknown') + ' not targeted');
+        AutomationEngine.scheduleNextCycle(jitter(3000, 0.3));
+        return;
+      }
+      if (!self.checkSubredditCooldown(subreddit)) {
+        AutomationEngine.stats.postsSkipped++;
+        AutomationEngine.addLog('Skipped: r/' + subreddit + ' cooldown');
+        AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+        return;
+      }
+      if (!self.checkRateLimit()) {
+        AutomationEngine.addLog('Rate limit reached: ' + self.config.maxCommentsPerHour + '/hr');
+        var waitMs = self.commentTimestamps.length > 0 ? 3600000 - (Date.now() - self.commentTimestamps[0].timestamp) + 5000 : 60000;
+        AutomationEngine.scheduleNextCycle(Math.max(waitMs, 60000));
+        return;
+      }
+      self.checkSubredditRules(subreddit, function (allowed) {
+        if (!allowed) {
+          AutomationEngine.stats.postsSkipped++;
+          AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+          return;
+        }
+        AutomationEngine.scrollToPost(postEl, function () {
+          if (AutomationEngine.state !== 'running') return;
+          var readDelay = jitter(randomBetween(5000, 15000), 0.15);
+          AutomationEngine.updateCountdown(readDelay, 'Reading...');
+          bgTimeout(function () {
+            if (AutomationEngine.state !== 'running') return;
+            if (!postEl.isConnected) { AutomationEngine.addLog('Post removed from DOM'); AutomationEngine.scheduleNextCycle(jitter(3000, 0.3)); return; }
+            var context = AutomationEngine.extractPostContext(postEl);
+            context.subreddit = subreddit;
+
+            var mentionMode = null;
+            if (self.shouldMentionBusiness()) {
+              mentionMode = { active: true, businessName: self.config.businessName, businessDescription: self.config.businessDescription };
+            }
+
+            var settings = savedSettings || {};
+            var ps = (settings.platformSettings && settings.platformSettings.reddit) || {};
+            var autoInstructionPresets = ps.instructionPresets || [];
+            var autoCustomInstructions = ps.customInstructions || '';
+
+            chrome.runtime.sendMessage({
+              type: 'generate', data: {
+                platform: 'reddit',
+                task: 'reddit_auto_comment',
+                tone: ps.tone || 'casual',
+                context: context,
+                personality: 'You are a real Reddit user. You are helpful, genuine, and community-aware. You match the subreddit culture. You write in natural conversational English like you are chatting with a peer. You never sound like marketing, a bot, or AI. You avoid corporate language entirely.',
+                contextInfo: '',
+                mentionPages: [],
+                instructionPresets: autoInstructionPresets,
+                customInstructions: autoCustomInstructions,
+                mentionMode: mentionMode
+              }
+            }, function (response) {
+              if (chrome.runtime.lastError) { console.log('[SAIC-Reddit] Error:', chrome.runtime.lastError.message); AutomationEngine.scheduleNextCycle(jitter(5000, 0.3)); return; }
+              var text = (response && response.text) ? response.text.trim() : '';
+              if (!text || text === 'SKIP') {
+                AutomationEngine.stats.postsSkipped++;
+                AutomationEngine.addLog(text === 'SKIP' ? 'Skipped: not relevant or controversial' : 'Skipped: no response');
+                AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+                return;
+              }
+              if (self.isDuplicateOpening(text)) {
+                AutomationEngine.addLog('Skipped: duplicate opening');
+                AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+                return;
+              }
+              self.recordOpening(text);
+              if (self.config.autoSubmit) {
+                self.submitRedditComment(postEl, text, subreddit, function (success) {
+                  self.afterRedditComment(success, text, postEl, subreddit);
+                });
+              } else {
+                AutomationEngine.showReviewOverlay(postEl, text, function (approved) {
+                  if (approved) self.afterRedditComment(true, text, postEl, subreddit);
+                  else { AutomationEngine.addLog('Skipped by user'); AutomationEngine.scheduleNextCycle(jitter(5000, 0.3)); }
+                });
+              }
+            });
+          }, readDelay);
+        });
+      });
+    },
+
+    submitRedditComment: function (postEl, text, subreddit, callback) {
+      var self = this;
+      if (AutomationEngine.state !== 'running') { callback(false); return; }
+      AutomationEngine.clickCommentButton(postEl, function (replyField) {
+        if (!replyField) { console.log('[SAIC-Reddit] No reply field'); callback(false); return; }
+        self.redditTypeChars(replyField, text, function () {
+          if (AutomationEngine.state !== 'running') { callback(false); return; }
+          bgTimeout(function () {
+            var selector = platformConfig.submitButtonSelector;
+            if (!selector) { callback(false); return; }
+            var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
+            var btn = container.querySelector(selector);
+            if (!btn) btn = postEl.querySelector(selector);
+            if (!btn) {
+              var allBtns = container.querySelectorAll('button');
+              for (var i = 0; i < allBtns.length; i++) {
+                var txt = (allBtns[i].textContent || '').toLowerCase().trim();
+                if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }
+              }
+            }
+            if (!btn) { console.log('[SAIC-Reddit] No submit button'); callback(false); return; }
+            var rect = btn.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Reddit] Submit not visible'); callback(false); return; }
+            humanMouseMove(btn, function () {
+              self.redditClick(btn, function () {
+                console.log('[SAIC-Reddit] Submitted');
+                callback(true);
+              });
+            });
+          }, jitter(randomBetween(800, 2000), 0.2));
+        });
+      });
+    },
+
+    afterRedditComment: function (success, text, postEl, subreddit) {
+      var self = this;
+      if (success) {
+        AutomationEngine.stats.commentsMade++;
+        self.totalComments++;
+        self.commentTimestamps.push({ timestamp: Date.now(), subreddit: subreddit });
+        if (self.config.businessName && text.toLowerCase().indexOf(self.config.businessName.toLowerCase()) !== -1) {
+          self.mentionCount++;
+        }
+        AutomationEngine.addLog('Commented in r/' + subreddit + ': "' + (text || '').substring(0, 50) + '..."');
+      } else {
+        AutomationEngine.addLog('Failed to submit');
+      }
+      if (postEl) AutomationEngine.recordComment(postEl, text, success);
+      AutomationEngine.updateUI();
+      var delay = self.getRedditDelay();
+      AutomationEngine.scheduleNextCycle(delay);
     }
   };
 
