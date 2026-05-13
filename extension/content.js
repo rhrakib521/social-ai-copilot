@@ -147,8 +147,19 @@
         }
       }
     } else if (platform === 'reddit') {
-      var link4 = postEl.querySelector('a[href*="/comments/"], a.comments, a[data-testid="post-comment-link"], a.title, a[data-click-id="comments"]');
-      if (link4) href = link4.getAttribute('href') || '';
+      var rdTag = postEl.tagName ? postEl.tagName.toLowerCase() : '';
+      if (rdTag === 'shreddit-post') {
+        var thingid = postEl.getAttribute('thingid');
+        var subAttr2 = postEl.getAttribute('subreddit');
+        if (thingid && thingid.indexOf('t3_') === 0 && subAttr2) {
+          var postId2 = thingid.replace('t3_', '');
+          href = 'https://www.reddit.com/r/' + subAttr2 + '/comments/' + postId2;
+        }
+      }
+      if (!href) {
+        var link4 = postEl.querySelector('a[href*="/comments/"], a.comments, a[data-testid="post-comment-link"], a.title, a[data-click-id="comments"]');
+        if (link4) href = link4.getAttribute('href') || '';
+      }
       if (!href) {
         // Try the post title link
         var titleLink = postEl.querySelector('a.title, a[data-click-id="body"]');
@@ -183,11 +194,22 @@
       var xName = postEl.querySelector('[data-testid="User-Name"] a span span, [data-testid="name"]');
       if (xName) info.name = (xName.innerText || xName.textContent || '').trim();
     } else if (platform === 'reddit') {
-      var rdAuthor = postEl.querySelector('.author, a[data-testid="post_author_link"], [data-testid="comment_author_link"]');
-      if (rdAuthor) {
-        info.name = (rdAuthor.innerText || rdAuthor.textContent || '').trim().replace(/^u\//, '');
-        info.handle = info.name;
-        info.profileUrl = 'https://www.reddit.com/user/' + info.handle;
+      var rdTag2 = postEl.tagName ? postEl.tagName.toLowerCase() : '';
+      if (rdTag2 === 'shreddit-post') {
+        var authorAttr = postEl.getAttribute('author');
+        if (authorAttr) {
+          info.name = authorAttr;
+          info.handle = authorAttr;
+          info.profileUrl = 'https://www.reddit.com/user/' + authorAttr;
+        }
+      }
+      if (!info.name) {
+        var rdAuthor = postEl.querySelector('.author, a[data-testid="post_author_link"], [data-testid="comment_author_link"]');
+        if (rdAuthor) {
+          info.name = (rdAuthor.innerText || rdAuthor.textContent || '').trim().replace(/^u\//, '');
+          info.handle = info.name;
+          info.profileUrl = 'https://www.reddit.com/user/' + info.handle;
+        }
       }
     }
     return info;
@@ -365,6 +387,7 @@
         '[contenteditable="true"]'
       ],
       postContainers: [
+        'shreddit-post',
         '.thing.link',
         '.thing.comment',
         '[data-testid="post-container"]',
@@ -372,9 +395,9 @@
       ],
       authorSelector: '.author, a[data-testid="post_author_link"], [data-testid="comment_author_link"]',
       personality: 'You are writing for Reddit. Be authentic, knowledgeable, and community-aware. Match the subreddit culture. Avoid overly marketing language. Use proper formatting with Markdown.',
-      postSelector: '[data-testid="post-container"], .Post, .thing.link',
-      commentButtonSelector: 'button[onclick*="comment"], [data-testid="comment-button"]',
-      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"]',
+      postSelector: 'shreddit-post, [data-testid="post-container"], .Post, .thing.link',
+      commentButtonSelector: 'button[onclick*="comment"], [data-testid="comment-button"], a[aria-label*="comment" i], button[aria-label*="comment" i]',
+      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"], textarea[placeholder*="comment" i], [contenteditable="true"][data-placeholder]',
       submitButtonSelector: 'button[type="submit"]',
       scoreSelector: '.score, [aria-label="upvote"] + div[title], .score.unvoted',
       commentLinkSelector: 'a.comments, [data-testid="post-comment-link"]',
@@ -383,6 +406,41 @@
   };
 
   // ── Context extraction ──
+
+  function querySelectorDeep(el, selector) {
+    var result = el.querySelector(selector);
+    if (result) return result;
+    if (el.shadowRoot) {
+      result = el.shadowRoot.querySelector(selector);
+      if (result) return result;
+    }
+    var children = el.querySelectorAll('*');
+    for (var i = 0; i < children.length; i++) {
+      if (children[i].shadowRoot) {
+        result = children[i].shadowRoot.querySelector(selector);
+        if (result) return result;
+      }
+    }
+    return null;
+  }
+
+  function querySelectorAllDeep(el, selector) {
+    var results = [];
+    var light = el.querySelectorAll(selector);
+    for (var i = 0; i < light.length; i++) results.push(light[i]);
+    if (el.shadowRoot) {
+      var sr = el.shadowRoot.querySelectorAll(selector);
+      for (var j = 0; j < sr.length; j++) results.push(sr[j]);
+    }
+    var children = el.querySelectorAll('*');
+    for (var k = 0; k < children.length; k++) {
+      if (children[k].shadowRoot) {
+        var csr = children[k].shadowRoot.querySelectorAll(selector);
+        for (var l = 0; l < csr.length; l++) results.push(csr[l]);
+      }
+    }
+    return results;
+  }
   function getSelectedText() {
     var sel = window.getSelection();
     return sel ? sel.toString().trim() : '';
@@ -1382,10 +1440,19 @@
         var rtEl = postEl.querySelector(platformConfig.retweetCountSelector);
         if (rtEl) result.comments = extractCountFromEl(rtEl);
       } else if (platformName === 'reddit') {
-        var sEl = postEl.querySelector(platformConfig.scoreSelector);
-        if (sEl) result.reactions = extractCountFromEl(sEl);
-        var clEl = postEl.querySelector(platformConfig.commentLinkSelector);
-        if (clEl) result.comments = extractCountFromEl(clEl);
+        var shTag = postEl.tagName ? postEl.tagName.toLowerCase() : '';
+        if (shTag === 'shreddit-post') {
+          result.reactions = parseInt(postEl.getAttribute('score')) || 0;
+          result.comments = parseInt(postEl.getAttribute('comment-count')) || 0;
+        }
+        if (result.reactions === 0) {
+          var sEl = postEl.querySelector(platformConfig.scoreSelector);
+          if (sEl) result.reactions = extractCountFromEl(sEl);
+        }
+        if (result.comments === 0) {
+          var clEl = postEl.querySelector(platformConfig.commentLinkSelector);
+          if (clEl) result.comments = extractCountFromEl(clEl);
+        }
       }
       result.total = result.reactions + result.comments;
       return result;
@@ -1582,8 +1649,9 @@
       var self = this;
       var selector = platformConfig.commentButtonSelector;
       if (!selector) { callback(null); return; }
-      // Search comment button within post, then immediate parent only
-      var btn = postEl.querySelector(selector);
+      var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+      // Search comment button — try light DOM, then shadow DOM, then parent
+      var btn = isShreddit ? querySelectorDeep(postEl, selector) : postEl.querySelector(selector);
       if (!btn) {
         var parent = postEl.parentElement;
         if (parent) btn = parent.querySelector(selector);
@@ -1611,8 +1679,8 @@
           var field = null;
           var replySelector = platformConfig.replyFieldSelector;
           if (replySelector) {
-            // Tier 1: Search scoped to the exact post element
-            var postCandidates = postEl.querySelectorAll(replySelector);
+            // Tier 1: Search scoped to the exact post element (with shadow DOM piercing for shreddit)
+            var postCandidates = isShreddit ? querySelectorAllDeep(postEl, replySelector) : postEl.querySelectorAll(replySelector);
             for (var i = 0; i < postCandidates.length; i++) {
               var r = postCandidates[i].getBoundingClientRect();
               if (r.width > 0 && r.height > 0) { field = postCandidates[i]; break; }
@@ -1623,7 +1691,6 @@
               for (var j = 0; j < parentCandidates.length; j++) {
                 var r2 = parentCandidates[j].getBoundingClientRect();
                 if (r2.width > 0 && r2.height > 0) {
-                  // Field must be within or directly below the post (max 150px below post bottom)
                   if (r2.top >= postRect.top - 20 && r2.top <= postRect.bottom + 150) {
                     field = parentCandidates[j];
                     break;
@@ -1638,7 +1705,6 @@
               for (var k = 0; k < allCandidates.length; k++) {
                 var r3 = allCandidates[k].getBoundingClientRect();
                 if (r3.width > 0 && r3.height > 0) {
-                  // Must be below the post top and within 200px below post bottom
                   var dy = r3.top - postRect.bottom;
                   var dx = Math.abs(r3.left - postRect.left);
                   if (dy >= -30 && dy <= 200) {
@@ -2194,6 +2260,11 @@
     },
 
     extractSubreddit: function (postEl) {
+      var shTag = postEl.tagName ? postEl.tagName.toLowerCase() : '';
+      if (shTag === 'shreddit-post') {
+        var subAttr = (postEl.getAttribute('subreddit') || '').toLowerCase();
+        if (subAttr) return subAttr;
+      }
       if (!platformConfig || !platformConfig.subredditSelector) return '';
       var subEl = postEl.querySelector(platformConfig.subredditSelector);
       if (!subEl) {
@@ -2252,7 +2323,7 @@
       if (!self.config.skipBotRestrictedSubs) { callback(true); return; }
       if (self.blockedSubreddits.has(subreddit)) { callback(false); return; }
       var BOT_KEYWORDS = ['no bots', 'no automated', 'no ai', 'no self-promo', 'human only', 'manual posts only', 'no automated posting', 'bot-free'];
-      var sidebarEl = document.querySelector('.sidebar, .side, [data-testid="sidebar"], .reddit-sidebar');
+      var sidebarEl = document.querySelector('.sidebar, .side, [data-testid="sidebar"], .reddit-sidebar, shreddit-sidebar, [slot="sidebar"]');
       if (!sidebarEl) sidebarEl = document.querySelector('.rules-page, [data-testid="rules"]');
       if (sidebarEl) {
         var rulesText = (sidebarEl.innerText || '').toLowerCase();
@@ -2516,11 +2587,12 @@
           bgTimeout(function () {
             var selector = platformConfig.submitButtonSelector;
             if (!selector) { callback(false); return; }
-            var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
-            var btn = container.querySelector(selector);
-            if (!btn) btn = postEl.querySelector(selector);
+            var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"], shreddit-post') || postEl;
+            var isShreddit2 = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+            var btn = isShreddit2 ? querySelectorDeep(container, selector) : container.querySelector(selector);
+            if (!btn) btn = isShreddit2 ? querySelectorDeep(postEl, selector) : postEl.querySelector(selector);
             if (!btn) {
-              var allBtns = container.querySelectorAll('button');
+              var allBtns = isShreddit2 ? querySelectorAllDeep(container, 'button') : container.querySelectorAll('button');
               for (var i = 0; i < allBtns.length; i++) {
                 var txt = (allBtns[i].textContent || '').toLowerCase().trim();
                 if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }

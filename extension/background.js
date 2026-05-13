@@ -451,7 +451,7 @@ var DEFAULT_SETTINGS = {
   openaiModel: 'gpt-4.1-mini',
   glmModel: 'glm-5.1',
   geminiModel: 'gemini-2.5-flash',
-  deepseekModel: 'deepseek-chat',
+  deepseekModel: 'deepseek-v4-flash',
   qwenModel: 'qwen-plus',
   backendToken: '',
   contexts: [],
