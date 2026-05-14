@@ -482,7 +482,6 @@
   var addContextBtn = document.getElementById('addContextBtn');
   var contextName = document.getElementById('contextName');
   var contextBody = document.getElementById('contextBody');
-  var contextIsDefault = document.getElementById('contextIsDefault');
   var wordCountEl = document.getElementById('wordCount');
   var saveContextBtn = document.getElementById('saveContextBtn');
   var cancelContextBtn = document.getElementById('cancelContextBtn');
@@ -524,12 +523,6 @@
       var nameEl = document.createElement('div');
       nameEl.className = 'ctx-name';
       nameEl.textContent = ctx.name;
-      if (ctx.isDefault) {
-        var badge = document.createElement('span');
-        badge.className = 'ctx-badge';
-        badge.textContent = 'DEFAULT';
-        nameEl.appendChild(badge);
-      }
       info.appendChild(nameEl);
 
       var preview = document.createElement('div');
@@ -564,12 +557,10 @@
       if (ctx) {
         contextName.value = ctx.name;
         contextBody.value = ctx.body;
-        contextIsDefault.checked = ctx.isDefault;
       }
     } else {
       contextName.value = '';
       contextBody.value = '';
-      contextIsDefault.checked = contexts.length === 0;
     }
     wordCountEl.textContent = getWordCount(contextBody.value);
     contextEditor.classList.remove('hidden');
@@ -586,6 +577,24 @@
   function saveContextToSettings() {
     // Persist contexts into settings so background.js and content.js can read them
     chrome.runtime.sendMessage({ type: 'saveSettings', data: { contexts: contexts } }, function () {});
+    // Refresh platform context dropdowns so new/edited contexts appear
+    refreshPlatformContextDropdowns();
+  }
+
+  function refreshPlatformContextDropdowns() {
+    ['linkedin', 'facebook', 'x', 'reddit'].forEach(function (platform) {
+      var ctxSelect = document.getElementById('ps-' + platform + '-activeContext');
+      if (!ctxSelect) return;
+      var currentVal = ctxSelect.value;
+      ctxSelect.innerHTML = '<option value="">None</option>';
+      contexts.forEach(function (ctx) {
+        var opt = document.createElement('option');
+        opt.value = ctx.id;
+        opt.textContent = ctx.name;
+        ctxSelect.appendChild(opt);
+      });
+      ctxSelect.value = currentVal;
+    });
   }
 
   addContextBtn.addEventListener('click', function () { openContextEditor(null); });
@@ -600,24 +609,17 @@
     if (!body) { contextBody.style.borderColor = '#ef4444'; return; }
     if (words > 500) { wordCountEl.style.color = '#ef4444'; return; }
 
-    var isDefault = contextIsDefault.checked;
-    if (isDefault) {
-      contexts.forEach(function (c) { c.isDefault = false; });
-    }
-
     if (editingContextId) {
       var ctx = contexts.find(function (c) { return c.id === editingContextId; });
       if (ctx) {
         ctx.name = name;
         ctx.body = body;
-        ctx.isDefault = isDefault;
       }
     } else {
       var newCtx = {
         id: 'ctx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         name: name,
-        body: body,
-        isDefault: isDefault || contexts.length === 0
+        body: body
       };
       contexts.push(newCtx);
     }
@@ -632,13 +634,7 @@
     if (!ctx) return;
     if (!confirm('Delete context "' + ctx.name + '"?')) return;
 
-    var wasDefault = ctx.isDefault;
     contexts = contexts.filter(function (c) { return c.id !== id; });
-
-    // Transfer default to first remaining
-    if (wasDefault && contexts.length > 0) {
-      contexts[0].isDefault = true;
-    }
 
     saveContextToSettings();
     renderContexts();

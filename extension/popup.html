@@ -219,15 +219,6 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .ctx-name .ctx-badge {
-      background: #6366f1;
-      color: #fff;
-      font-size: 9px;
-      padding: 1px 5px;
-      border-radius: 3px;
-      font-weight: 600;
-      margin-left: 4px;
-    }
     .ctx-preview {
       font-size: 10px;
       color: #94a3b8;
@@ -422,7 +413,7 @@
 
     <div class="section">
       <div class="section-title">Contexts</div>
-      <p style="font-size:11px;color:#94a3b8;margin-bottom:10px;">Add context profiles to guide AI responses. The default context is auto-applied when none is selected.</p>
+      <p style="font-size:11px;color:#94a3b8;margin-bottom:10px;">Create context profiles here. Then assign them to each platform in their respective tabs.</p>
       <div id="contextList"></div>
       <button type="button" id="addContextBtn" style="margin-top:8px;padding:6px 14px;border:1px dashed #6366f1;border-radius:6px;background:#f8faff;color:#6366f1;font-size:12px;font-weight:500;cursor:pointer;width:100%;">+ Add Context</button>
 
@@ -434,10 +425,6 @@
         <textarea id="contextBody" rows="5" placeholder="Describe the context, persona, or guidelines the AI should follow when this context is selected. Example: You are a B2B SaaS sales expert. Focus on ROI, metrics, and business outcomes. Reference case studies and data points when possible." style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;margin-bottom:4px;color:#1e293b;background:#fff;"></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <span style="font-size:10px;color:#94a3b8;"><span id="wordCount">0</span>/500 words</span>
-          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#64748b;cursor:pointer;margin-bottom:0;">
-            <input type="checkbox" id="contextIsDefault" style="width:auto;margin:0;">
-            Set as default
-          </label>
         </div>
         <div style="display:flex;gap:6px;">
           <button type="button" id="saveContextBtn" style="flex:1;padding:6px;border:none;border-radius:6px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Save</button>
@@ -494,7 +481,7 @@
         <option value="funny">Funny</option>
         <option value="informative">Informative</option>
       </select>
-      <label for="ps-linkedin-activeContext">Active Context</label>
+      <label for="ps-linkedin-activeContext">Default Context</label>
       <select id="ps-linkedin-activeContext">
         <option value="">None</option>
       </select>
@@ -563,7 +550,7 @@
         <option value="funny">Funny</option>
         <option value="informative">Informative</option>
       </select>
-      <label for="ps-facebook-activeContext">Active Context</label>
+      <label for="ps-facebook-activeContext">Default Context</label>
       <select id="ps-facebook-activeContext">
         <option value="">None</option>
       </select>
@@ -632,7 +619,7 @@
         <option value="funny">Funny</option>
         <option value="informative">Informative</option>
       </select>
-      <label for="ps-x-activeContext">Active Context</label>
+      <label for="ps-x-activeContext">Default Context</label>
       <select id="ps-x-activeContext">
         <option value="">None</option>
       </select>
@@ -701,7 +688,7 @@
         <option value="funny">Funny</option>
         <option value="informative">Informative</option>
       </select>
-      <label for="ps-reddit-activeContext">Active Context</label>
+      <label for="ps-reddit-activeContext">Default Context</label>
       <select id="ps-reddit-activeContext">
         <option value="">None</option>
       </select>
