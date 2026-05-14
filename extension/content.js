@@ -874,7 +874,7 @@
         return;
       }
       setPostMode(false);
-      handleAction(actionId, toneSelect.value, contextSelect ? contextSelect.value : '', field, resultCard, insertBtn, regenBtn, resultActions);
+      handleAction(actionId, toneSelect.value, contextSelect ? contextSelect.value : '', field, resultCard, insertBtn, regenBtn, resultActions, instructionPresets, customInstructions);
     }
 
     // Post generate handler
@@ -901,6 +901,13 @@
       lastGeneratedAction = 'post';
       lastGeneratedTone = toneSelect.value;
 
+      // Check extension context validity
+      if (!chrome.runtime || !chrome.runtime.id) {
+        resultCard.textContent = 'Error: Extension context lost. Please reload the page and try again.';
+        resultCard.className = 'saic-result-card saic-error';
+        return;
+      }
+
       // Build context with user's topic
       var postContext = {
         postText: userTopic,
@@ -915,7 +922,9 @@
         postTimedOut = true;
         resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
         resultCard.className = 'saic-result-card saic-error';
-      }, 95000);
+      }, 60000);
+
+      console.log('[SAIC] Sending post generate request');
 
       chrome.runtime.sendMessage({
         type: 'generate',
@@ -924,14 +933,18 @@
           task: 'post',
           tone: toneSelect.value,
           context: postContext,
-          personality: platformConfig.personality,
+          personality: platformConfig ? platformConfig.personality : '',
           contextInfo: selectedCtxTexts.join('\n'),
+          mentionPages: ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {}).mentionPages || [],
           instructionPresets: instructionPresets,
           customInstructions: customInstructions
         }
       }, function (response) {
         clearTimeout(postTimeout);
         if (postTimedOut) return;
+
+        console.log('[SAIC] Post response received:', response ? (response.error ? 'error' : 'text:' + (response.text || '').length) : 'null');
+
         if (chrome.runtime.lastError) {
           resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
           resultCard.className = 'saic-result-card saic-error';
@@ -992,83 +1005,104 @@
   }
 
   // ── Action handler ──
-  function handleAction(task, tone, contextId, field, resultCard, insertBtn, regenBtn, resultActions) {
-    var context = extractContext(field);
+  function handleAction(task, tone, contextId, field, resultCard, insertBtn, regenBtn, resultActions, activePresets, activeCustomInstr) {
+    try {
+      var context = extractContext(field);
 
-    // Resolve context info — only use what's explicitly selected
-    var contextInfo = '';
-    if (contextId) {
-      var allCtxs = (savedSettings && savedSettings.contexts) || [];
-      var match = allCtxs.find(function (c) { return c.id === contextId; });
-      if (match) contextInfo = match.body;
-    }
+      // Resolve context info — only use what's explicitly selected
+      var contextInfo = '';
+      if (contextId) {
+        var allCtxs = (savedSettings && savedSettings.contexts) || [];
+        var match = allCtxs.find(function (c) { return c.id === contextId; });
+        if (match) contextInfo = match.body;
+      }
 
-    resultCard.style.display = 'block';
-    resultCard.textContent = 'Generating...';
-    resultCard.className = 'saic-result-card saic-loading';
-    resultActions.style.display = 'none';
+      resultCard.style.display = 'block';
+      resultCard.textContent = 'Generating...';
+      resultCard.className = 'saic-result-card saic-loading';
+      resultActions.style.display = 'none';
 
-    lastGeneratedAction = task;
-    lastGeneratedTone = tone;
+      lastGeneratedAction = task;
+      lastGeneratedTone = tone;
 
-    // Send to background.js
-    var generateTimedOut = false;
-    var generateTimeout = setTimeout(function () {
-      generateTimedOut = true;
-      resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
-      resultCard.className = 'saic-result-card saic-error';
-    }, 95000);
+      // Check extension context validity
+      if (!chrome.runtime || !chrome.runtime.id) {
+        resultCard.textContent = 'Error: Extension context lost. Please reload the page and try again.';
+        resultCard.className = 'saic-result-card saic-error';
+        return;
+      }
 
-    chrome.runtime.sendMessage({
-      type: 'generate',
-      data: {
+      // Send to background.js
+      var generateTimedOut = false;
+      var generateTimeout = setTimeout(function () {
+        generateTimedOut = true;
+        resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
+        resultCard.className = 'saic-result-card saic-error';
+      }, 60000);
+
+      var messageData = {
         platform: platformName,
         task: task,
         tone: tone,
         context: context,
-        personality: platformConfig.personality,
+        personality: platformConfig ? platformConfig.personality : '',
         contextInfo: contextInfo,
-        instructionPresets: instructionPresets,
-        customInstructions: customInstructions
-      }
-    }, function (response) {
-      clearTimeout(generateTimeout);
-      if (generateTimedOut) return;
-      if (chrome.runtime.lastError) {
-        resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
-        resultCard.className = 'saic-result-card saic-error';
-        return;
-      }
-      if (response && response.error) {
-        resultCard.textContent = 'Error: ' + response.error;
-        resultCard.className = 'saic-result-card saic-error';
-        return;
-      }
-      if (response && response.text) {
-        lastGeneratedText = response.text;
-        resultCard.textContent = response.text;
-        resultCard.className = 'saic-result-card';
-        resultActions.style.display = 'flex';
+        mentionPages: ((savedSettings && savedSettings.platformSettings && savedSettings.platformSettings[platformName]) || {}).mentionPages || [],
+        instructionPresets: activePresets || [],
+        customInstructions: activeCustomInstr || ''
+      };
 
-        // Insert handler
-        var newInsertBtn = insertBtn.cloneNode(true);
-        insertBtn.parentNode.replaceChild(newInsertBtn, insertBtn);
-        newInsertBtn.addEventListener('click', function () {
-          insertTextAtCursor(field, response.text);
-          hidePopover();
-        });
+      console.log('[SAIC] Sending generate request:', task, platformName);
 
-        // Regenerate handler
-        var newRegenBtn = regenBtn.cloneNode(true);
-        regenBtn.parentNode.replaceChild(newRegenBtn, regenBtn);
-        newRegenBtn.addEventListener('click', function () {
-          handleAction(lastGeneratedAction, lastGeneratedTone, contextId, field, resultCard, newInsertBtn, newRegenBtn, resultActions);
-        });
-      } else {
-        resultCard.textContent = 'Error: No response received from the AI. Please check your API key and model settings.';
-        resultCard.className = 'saic-result-card saic-error';
-      }
-    });
+      chrome.runtime.sendMessage({
+        type: 'generate',
+        data: messageData
+      }, function (response) {
+        clearTimeout(generateTimeout);
+        if (generateTimedOut) return;
+
+        console.log('[SAIC] Response received:', response ? (response.error ? 'error' : 'text:' + (response.text || '').length) : 'null');
+
+        if (chrome.runtime.lastError) {
+          resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
+          resultCard.className = 'saic-result-card saic-error';
+          return;
+        }
+        if (response && response.error) {
+          resultCard.textContent = 'Error: ' + response.error;
+          resultCard.className = 'saic-result-card saic-error';
+          return;
+        }
+        if (response && response.text) {
+          lastGeneratedText = response.text;
+          resultCard.textContent = response.text;
+          resultCard.className = 'saic-result-card';
+          resultActions.style.display = 'flex';
+
+          // Insert handler
+          var newInsertBtn = insertBtn.cloneNode(true);
+          insertBtn.parentNode.replaceChild(newInsertBtn, insertBtn);
+          newInsertBtn.addEventListener('click', function () {
+            insertTextAtCursor(field, response.text);
+            hidePopover();
+          });
+
+          // Regenerate handler
+          var newRegenBtn = regenBtn.cloneNode(true);
+          regenBtn.parentNode.replaceChild(newRegenBtn, regenBtn);
+          newRegenBtn.addEventListener('click', function () {
+            handleAction(lastGeneratedAction, lastGeneratedTone, contextId, field, resultCard, newInsertBtn, newRegenBtn, resultActions, activePresets, activeCustomInstr);
+          });
+        } else {
+          resultCard.textContent = 'Error: No response received from the AI. Please check your API key and model settings.';
+          resultCard.className = 'saic-result-card saic-error';
+        }
+      });
+    } catch (err) {
+      console.error('[SAIC] handleAction error:', err);
+      resultCard.textContent = 'Error: ' + err.message;
+      resultCard.className = 'saic-result-card saic-error';
+    }
   }
 
   // ── Double-click listener ──

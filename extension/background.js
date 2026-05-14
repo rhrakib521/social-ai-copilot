@@ -591,6 +591,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       try {
         var data = message.data;
         var settings = await getSettings();
+        console.log('[SAIC] Generate request:', data.task, data.platform, 'provider:', settings.provider);
 
         var promptResult = buildPrompt(
           data.platform,
@@ -640,16 +641,20 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           throw new Error('Unknown provider: ' + settings.provider);
         }
 
-        await saveHistory({
+        console.log('[SAIC] API response received, length:', text.length);
+        sendResponse({ text: text });
+
+        saveHistory({
           platform: data.platform,
           task: data.task,
           tone: data.tone,
           input: data.context.postText || data.context.selectedText || '',
           output: text
+        }).catch(function (err) {
+          console.log('[SAIC] History save failed:', err.message);
         });
-
-        sendResponse({ text: text });
       } catch (err) {
+        console.error('[SAIC] Generate error:', err.message);
         sendResponse({ error: err.message });
       }
     })();
