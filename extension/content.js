@@ -910,6 +910,13 @@
         extraContexts: selectedCtxTexts
       };
 
+      var postTimedOut = false;
+      var postTimeout = setTimeout(function () {
+        postTimedOut = true;
+        resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
+        resultCard.className = 'saic-result-card saic-error';
+      }, 95000);
+
       chrome.runtime.sendMessage({
         type: 'generate',
         data: {
@@ -923,6 +930,8 @@
           customInstructions: customInstructions
         }
       }, function (response) {
+        clearTimeout(postTimeout);
+        if (postTimedOut) return;
         if (chrome.runtime.lastError) {
           resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
           resultCard.className = 'saic-result-card saic-error';
@@ -951,6 +960,9 @@
           newRegenBtn.addEventListener('click', function () {
             postGenerateBtn.click();
           });
+        } else {
+          resultCard.textContent = 'Error: No response received from the AI. Please check your API key and model settings.';
+          resultCard.className = 'saic-result-card saic-error';
         }
       });
     });
@@ -1000,6 +1012,13 @@
     lastGeneratedTone = tone;
 
     // Send to background.js
+    var generateTimedOut = false;
+    var generateTimeout = setTimeout(function () {
+      generateTimedOut = true;
+      resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
+      resultCard.className = 'saic-result-card saic-error';
+    }, 95000);
+
     chrome.runtime.sendMessage({
       type: 'generate',
       data: {
@@ -1013,6 +1032,8 @@
         customInstructions: customInstructions
       }
     }, function (response) {
+      clearTimeout(generateTimeout);
+      if (generateTimedOut) return;
       if (chrome.runtime.lastError) {
         resultCard.textContent = 'Error: ' + chrome.runtime.lastError.message;
         resultCard.className = 'saic-result-card saic-error';
@@ -1043,6 +1064,9 @@
         newRegenBtn.addEventListener('click', function () {
           handleAction(lastGeneratedAction, lastGeneratedTone, contextId, field, resultCard, newInsertBtn, newRegenBtn, resultActions);
         });
+      } else {
+        resultCard.textContent = 'Error: No response received from the AI. Please check your API key and model settings.';
+        resultCard.className = 'saic-result-card saic-error';
       }
     });
   }

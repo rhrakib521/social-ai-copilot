@@ -32,7 +32,10 @@
       "Bash(git push *)",
       "Bash(git pull *)",
       "Bash(git checkout *)",
-      "Bash(node -c content.js)"
+      "Bash(node -c content.js)",
+      "Bash(not exist *)",
+      "Bash(curl -s -w \"\\\\n\\\\nHTTP_STATUS:%{http_code}\" \"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer test_key\" -d \"{\\\\\"model\\\\\":\\\\\"gemini-3.1-flash-lite\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"max_tokens\\\\\":10}\")",
+      "Bash(node -c extension/popup.html)"
     ]
   }
 }
