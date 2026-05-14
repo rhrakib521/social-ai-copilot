@@ -59,7 +59,7 @@ async function callOpenAI(messages, options) {
   var model = options.openaiModel || 'gpt-4o-mini';
   var maxTokens = options.maxTokens || 300;
 
-  var response = await fetch('https://api.openai.com/v1/chat/completions', {
+  var response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -71,7 +71,7 @@ async function callOpenAI(messages, options) {
       max_tokens: maxTokens,
       temperature: 0.7
     })
-  });
+  }, 60000);
 
   if (!response.ok) {
     var errorBody = await response.text();
@@ -89,6 +89,22 @@ function sleep(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
+function fetchWithTimeout(url, options, timeoutMs) {
+  var controller = new AbortController();
+  var timeoutId = setTimeout(function () { controller.abort(); }, timeoutMs || 60000);
+  var opts = Object.assign({}, options, { signal: controller.signal });
+  return fetch(url, opts).then(function (response) {
+    clearTimeout(timeoutId);
+    return response;
+  }).catch(function (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out after ' + ((timeoutMs || 60000) / 1000) + ' seconds. The API may be slow or unreachable.');
+    }
+    throw err;
+  });
+}
+
 async function callGLM(messages, options) {
   var apiKey = options.apiKey;
   var model = options.glmModel || 'glm-5.1';
@@ -101,7 +117,7 @@ async function callGLM(messages, options) {
 
   var maxRetries = 3;
   for (var attempt = 0; attempt <= maxRetries; attempt++) {
-    var response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    var response = await fetchWithTimeout('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -114,7 +130,7 @@ async function callGLM(messages, options) {
         max_tokens: maxTokens,
         temperature: 0.7
       })
-    });
+    }, 60000);
 
     if (response.status === 429 && attempt < maxRetries) {
       // Rate limited — wait with exponential backoff (2s, 4s, 8s)
@@ -145,8 +161,7 @@ async function callGemini(messages, options) {
   var model = options.geminiModel || 'gemini-2.5-flash';
   var maxTokens = options.maxTokens || 300;
 
-  // Use OpenAI-compatible endpoint for simpler integration
-  var response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+  var response = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -158,7 +173,7 @@ async function callGemini(messages, options) {
       max_tokens: maxTokens,
       temperature: 0.7
     })
-  });
+  }, 90000);
 
   if (!response.ok) {
     var errorBody = await response.text();
@@ -169,7 +184,11 @@ async function callGemini(messages, options) {
   if (!data.choices || data.choices.length === 0) {
     throw new Error('Gemini API returned no choices.');
   }
-  return data.choices[0].message.content.trim();
+  var content = data.choices[0].message && data.choices[0].message.content;
+  if (!content) {
+    throw new Error('Gemini API returned empty content. Model "' + model + '" may not be available or the response format changed.');
+  }
+  return content.trim();
 }
 
 async function callDeepSeek(messages, options) {
@@ -177,7 +196,7 @@ async function callDeepSeek(messages, options) {
   var model = options.deepseekModel || 'deepseek-chat';
   var maxTokens = options.maxTokens || 300;
 
-  var response = await fetch('https://api.deepseek.com/chat/completions', {
+  var response = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -189,7 +208,7 @@ async function callDeepSeek(messages, options) {
       max_tokens: maxTokens,
       temperature: 0.7
     })
-  });
+  }, 60000);
 
   if (!response.ok) {
     var errorBody = await response.text();
@@ -208,7 +227,7 @@ async function callQwen(messages, options) {
   var model = options.qwenModel || 'qwen-plus';
   var maxTokens = options.maxTokens || 300;
 
-  var response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+  var response = await fetchWithTimeout('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -220,7 +239,7 @@ async function callQwen(messages, options) {
       max_tokens: maxTokens,
       temperature: 0.7
     })
-  });
+  }, 60000);
 
   if (!response.ok) {
     var errorBody = await response.text();
@@ -239,7 +258,7 @@ async function callBackendProxy(messages, options) {
   var backendUrl = options.backendUrl || 'https://localhost:3000/api/generate';
   var maxTokens = options.maxTokens || 300;
 
-  var response = await fetch(backendUrl, {
+  var response = await fetchWithTimeout(backendUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -250,7 +269,7 @@ async function callBackendProxy(messages, options) {
       max_tokens: maxTokens,
       temperature: 0.7
     })
-  });
+  }, 60000);
 
   if (!response.ok) {
     var errorBody = await response.text();
@@ -451,7 +470,7 @@ var DEFAULT_SETTINGS = {
   openaiModel: 'gpt-4.1-mini',
   glmModel: 'glm-5.1',
   geminiModel: 'gemini-2.5-flash',
-  deepseekModel: 'deepseek-chat',
+  deepseekModel: 'deepseek-v4-flash',
   qwenModel: 'qwen-plus',
   backendToken: '',
   contexts: [],

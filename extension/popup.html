@@ -357,9 +357,13 @@
           <option value="glm-4-air">GLM-4 Air</option>
           <option value="glm-4-plus">GLM-4 Plus</option>
           <option value="glm-4-long">GLM-4 Long</option>
+          <option value="glm-4-airx">GLM-4 AirX (Ultra Fast)</option>
           <option value="glm-4v-flash">GLM-4V Flash (Vision)</option>
+          <option value="glm-z1-air">GLM-Z1 Air (Reasoning)</option>
+          <option value="glm-z1-airx">GLM-Z1 AirX (Reasoning)</option>
+          <option value="glm-z1-flashx">GLM-Z1 FlashX (Reasoning)</option>
           <option value="glm-5">GLM-5</option>
-          <option value="glm-5.1">GLM-5.1 (Latest)</option>
+          <option value="glm-5.1">GLM-5.1</option>
           <option value="custom">Custom...</option>
         </select>
         <input type="text" id="glmModelCustom" class="hidden" placeholder="e.g. glm-z1-flash" autocomplete="off">
@@ -368,12 +372,12 @@
       <div id="geminiModelGroup" class="hidden">
         <label for="geminiModel">Gemini Model</label>
         <select id="geminiModel">
-          <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-          <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+          <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Cheapest)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (Deprecating Oct 2026)</option>
+          <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deprecating Oct 2026)</option>
           <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-          <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
+          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
           <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-          <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite Preview</option>
           <option value="custom">Custom...</option>
         </select>
         <input type="text" id="geminiModelCustom" class="hidden" placeholder="e.g. gemini-3-flash-preview-0625" autocomplete="off">
@@ -382,8 +386,10 @@
       <div id="deepseekModelGroup" class="hidden">
         <label for="deepseekModel">DeepSeek Model</label>
         <select id="deepseekModel">
-          <option value="deepseek-chat">DeepSeek Chat (V3.2)</option>
-          <option value="deepseek-reasoner">DeepSeek Reasoner (V3.2 Thinking)</option>
+          <option value="deepseek-v4-flash">DeepSeek V4 Flash (Low Cost)</option>
+          <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+          <option value="deepseek-chat">DeepSeek Chat (V3.2, Deprecating)</option>
+          <option value="deepseek-reasoner">DeepSeek Reasoner (V3.2, Deprecating)</option>
           <option value="custom">Custom...</option>
         </select>
         <input type="text" id="deepseekModelCustom" class="hidden" placeholder="e.g. deepseek-v4" autocomplete="off">
@@ -392,9 +398,11 @@
       <div id="qwenModelGroup" class="hidden">
         <label for="qwenModel">Qwen Model</label>
         <select id="qwenModel">
-          <option value="qwen-plus">Qwen Plus</option>
+          <option value="qwen-flash">Qwen Flash (Recommended)</option>
+          <option value="qwen-plus">Qwen Plus (Qwen3)</option>
+          <option value="qwen3-max">Qwen3 Max (Flagship)</option>
           <option value="qwen-max">Qwen Max</option>
-          <option value="qwen-turbo">Qwen Turbo (Fast)</option>
+          <option value="qwen-turbo">Qwen Turbo (Legacy, Use Flash)</option>
           <option value="qwen-turbo-latest">Qwen Turbo Latest</option>
           <option value="qwq-plus">QwQ Plus (Reasoning)</option>
           <option value="qwen-long">Qwen Long (Long Context)</option>
