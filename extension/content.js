@@ -915,7 +915,8 @@
 
     // Context selector (only shown when contexts exist)
     var allContexts = (savedSettings && savedSettings.contexts) || [];
-    var defaultCtxId = '';
+    var platformActiveContextId = platformInstr.activeContext || '';
+    var defaultCtxId = platformActiveContextId;
     var contextSelect = null;
     if (allContexts.length > 0) {
       contextSelect = document.createElement('select');
@@ -927,9 +928,8 @@
       allContexts.forEach(function (ctx) {
         var opt = document.createElement('option');
         opt.value = ctx.id;
-        opt.textContent = ctx.name + (ctx.isDefault ? ' \u2605' : '');
-        if (ctx.isDefault) {
-          defaultCtxId = ctx.id;
+        opt.textContent = ctx.name;
+        if (ctx.id === platformActiveContextId) {
           opt.selected = true;
         }
         contextSelect.appendChild(opt);
@@ -974,7 +974,6 @@
         pill.className = 'saic-ctx-pill' + (postSelectedCtxIds.indexOf(ctx.id) !== -1 ? ' saic-ctx-pill-active' : '');
         pill.textContent = ctx.name;
         pill.dataset.ctxId = ctx.id;
-        if (ctx.isDefault) pill.textContent += ' \u2605';
         pill.addEventListener('click', function () {
           var idx = postSelectedCtxIds.indexOf(ctx.id);
           if (idx !== -1) {
@@ -1722,11 +1721,6 @@
       if (activeContextId) {
         for (var i = 0; i < allContexts.length; i++) {
           if (allContexts[i].id === activeContextId) { contextInfo = allContexts[i].body; break; }
-        }
-      }
-      if (!contextInfo) {
-        for (var j = 0; j < allContexts.length; j++) {
-          if (allContexts[j].isDefault) { contextInfo = allContexts[j].body; break; }
         }
       }
 
