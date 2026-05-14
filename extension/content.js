@@ -376,32 +376,51 @@
     },
     reddit: {
       editableFields: [
+        'textarea[placeholder*="comment" i]',
+        'textarea[placeholder*="What" i]',
+        '[role="textbox"][contenteditable="true"]',
         'textarea[name="text"]',
         'textarea#comment-textarea',
         '.notreview-textarea',
         'textarea[class*="comment"]',
         '.public-DraftEditor-content[contenteditable="true"]',
-        '[role="textbox"][contenteditable="true"]',
         '[contenteditable="true"][data-placeholder]',
         '.md textarea',
         '[contenteditable="true"]'
       ],
       postContainers: [
         'shreddit-post',
+        '[data-testid="post-container"]',
+        '.Post',
         '.thing.link',
         '.thing.comment',
-        '[data-testid="post-container"]',
         '.Comment'
       ],
       authorSelector: '.author, a[data-testid="post_author_link"], [data-testid="comment_author_link"]',
       personality: 'You are writing for Reddit. Be authentic, knowledgeable, and community-aware. Match the subreddit culture. Avoid overly marketing language. Use proper formatting with Markdown.',
       postSelector: 'shreddit-post, [data-testid="post-container"], .Post, .thing.link',
-      commentButtonSelector: 'button[onclick*="comment"], [data-testid="comment-button"], a[aria-label*="comment" i], button[aria-label*="comment" i]',
-      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"], textarea[placeholder*="comment" i], [contenteditable="true"][data-placeholder]',
+      commentButtonSelector: 'a[slot="comments-link"], button[onclick*="comment"], [data-testid="comment-button"], a[aria-label*="comment" i], button[aria-label*="comment" i], a[href*="/comments/"]',
+      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"], textarea[placeholder*="comment" i], [contenteditable="true"][data-placeholder], textarea[placeholder*="What" i], [role="textbox"][contenteditable="true"]',
       submitButtonSelector: 'button[type="submit"]',
       scoreSelector: '.score, [aria-label="upvote"] + div[title], .score.unvoted',
-      commentLinkSelector: 'a.comments, [data-testid="post-comment-link"]',
-      subredditSelector: 'a[href*="/r/"], a[data-click-id="subreddit"]'
+      commentLinkSelector: 'a.comments, [data-testid="post-comment-link"], a[href*="/comments/"]',
+      subredditSelector: 'a[href*="/r/"], a[data-click-id="subreddit"]',
+      redditCommentButtonSelectors: [
+        'a[slot="comments-link"]',
+        'button[aria-label*="comment" i]',
+        'a[aria-label*="comment" i]',
+        'a[href*="/comments/"]',
+        'button[onclick*="comment"]',
+        '[data-testid="comment-button"]',
+        'a.comments'
+      ],
+      redditSubmitButtonSelectors: [
+        'button[type="submit"]',
+        'button[aria-label*="comment" i]',
+        'button[aria-label*="reply" i]',
+        'button[aria-label*="Comment"]',
+        'button[aria-label*="Reply"]'
+      ]
     }
   };
 
@@ -441,6 +460,82 @@
     }
     return results;
   }
+
+  function querySelectorDeepRecursive(el, selector, maxDepth) {
+    maxDepth = maxDepth || 5;
+    if (maxDepth <= 0 || !el) return null;
+    var result = el.querySelector(selector);
+    if (result) return result;
+    var roots = [];
+    if (el.shadowRoot) roots.push(el.shadowRoot);
+    var children = el.querySelectorAll('*');
+    for (var i = 0; i < children.length; i++) {
+      if (children[i].shadowRoot) roots.push(children[i].shadowRoot);
+    }
+    for (var j = 0; j < roots.length; j++) {
+      result = roots[j].querySelector(selector);
+      if (result) return result;
+      var srChildren = roots[j].querySelectorAll('*');
+      for (var k = 0; k < srChildren.length; k++) {
+        if (srChildren[k].shadowRoot) {
+          result = querySelectorDeepRecursive(srChildren[k], selector, maxDepth - 1);
+          if (result) return result;
+        }
+      }
+    }
+    return null;
+  }
+
+  function querySelectorAllDeepRecursive(el, selector, maxDepth) {
+    maxDepth = maxDepth || 5;
+    var results = [];
+    if (maxDepth <= 0 || !el) return results;
+    var light = el.querySelectorAll(selector);
+    for (var i = 0; i < light.length; i++) results.push(light[i]);
+    var roots = [];
+    if (el.shadowRoot) roots.push(el.shadowRoot);
+    var children = el.querySelectorAll('*');
+    for (var j = 0; j < children.length; j++) {
+      if (children[j].shadowRoot) roots.push(children[j].shadowRoot);
+    }
+    for (var m = 0; m < roots.length; m++) {
+      var sr = roots[m].querySelectorAll(selector);
+      for (var n = 0; n < sr.length; n++) results.push(sr[n]);
+      var srChildren = roots[m].querySelectorAll('*');
+      for (var p = 0; p < srChildren.length; p++) {
+        if (srChildren[p].shadowRoot) {
+          var nested = querySelectorAllDeepRecursive(srChildren[p], selector, maxDepth - 1);
+          for (var q = 0; q < nested.length; q++) results.push(nested[q]);
+        }
+      }
+    }
+    return results;
+  }
+
+  function extractShadowText(el, maxLength) {
+    maxLength = maxLength || 2000;
+    if (!el) return '';
+    var parts = [];
+    function walk(node) {
+      if (!node || parts.join(' ').length >= maxLength) return;
+      if (node.nodeType === 3) {
+        var t = node.textContent.trim();
+        if (t) parts.push(t);
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      var tag = node.tagName ? node.tagName.toLowerCase() : '';
+      if (tag === 'script' || tag === 'style' || tag === 'template') return;
+      for (var i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+      if (node.shadowRoot) {
+        for (var j = 0; j < node.shadowRoot.childNodes.length; j++) walk(node.shadowRoot.childNodes[j]);
+      }
+    }
+    walk(el);
+    var text = parts.join(' ').replace(/\s+/g, ' ').trim();
+    if (text.length > maxLength) text = text.substring(0, maxLength) + '...';
+    return text;
+  }
   function getSelectedText() {
     var sel = window.getSelection();
     return sel ? sel.toString().trim() : '';
@@ -463,6 +558,22 @@
   function extractText(el, maxLength) {
     maxLength = maxLength || 2000;
     if (!el) return '';
+    var tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'shreddit-post') {
+      var parts = [];
+      var titleAttr = el.getAttribute('post-title') || el.getAttribute('title') || '';
+      if (titleAttr) parts.push(titleAttr);
+      var innerText = (el.innerText || '').trim();
+      if (innerText && innerText.length > titleAttr.length) {
+        parts.push(innerText);
+      } else {
+        var sText = extractShadowText(el, maxLength);
+        if (sText && sText.length > titleAttr.length) parts.push(sText);
+      }
+      var text = parts.join('\n').trim();
+      if (text.length > maxLength) text = text.substring(0, maxLength) + '...';
+      return text;
+    }
     var text = (el.innerText || el.textContent || '').trim();
     if (text.length > maxLength) text = text.substring(0, maxLength) + '...';
     return text;
@@ -475,6 +586,41 @@
     result.selectedText = getSelectedText();
 
     var postEl = findNearestAncestor(activeEl, platformConfig.postContainers, 20);
+
+    // Reddit fallback: if no ancestor found, find nearest shreddit-post by visual position
+    if (!postEl && platformName === 'reddit') {
+      var fieldRect = activeEl.getBoundingClientRect();
+      var allPosts = document.querySelectorAll('shreddit-post, [data-testid="post-container"], .Post, .thing.link');
+      var bestPost = null, bestDist = Infinity;
+      for (var pi = 0; pi < allPosts.length; pi++) {
+        var pr = allPosts[pi].getBoundingClientRect();
+        if (pr.height === 0) continue;
+        var dy = Math.abs(fieldRect.top - pr.top);
+        var dx = Math.abs(fieldRect.left - pr.left);
+        var dist = dy + dx * 0.5;
+        if (dist < bestDist) { bestDist = dist; bestPost = allPosts[pi]; }
+      }
+      postEl = bestPost;
+      // Also try walking through shadow root boundaries
+      if (!postEl) {
+        var current = activeEl;
+        var depth = 0;
+        while (current && current !== document.body && depth < 30) {
+          var parent = current.parentElement;
+          if (!parent && current.parentNode) {
+            var root = current.getRootNode && current.getRootNode();
+            if (root && root.host) parent = root.host;
+          }
+          if (parent && parent.tagName && parent.tagName.toLowerCase() === 'shreddit-post') {
+            postEl = parent;
+            break;
+          }
+          current = parent;
+          depth++;
+        }
+      }
+    }
+
     if (postEl) {
       result.postText = extractText(postEl);
       if (platformConfig.authorSelector) {
@@ -482,6 +628,11 @@
         if (authorEls.length > 0) {
           result.author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
         }
+      }
+      // For shreddit-post, also get author from attributes
+      if (!result.author && postEl.getAttribute) {
+        var authorAttr = postEl.getAttribute('author');
+        if (authorAttr) result.author = authorAttr;
       }
       var siblings = postEl.parentElement ? postEl.parentElement.children : [];
       var comments = [];
@@ -1708,6 +1859,12 @@
       var selector = platformConfig.commentButtonSelector;
       if (!selector) { callback(null); return; }
       var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+
+      // Reddit shreddit-post: use dedicated Reddit handler
+      if (isShreddit && platformName === 'reddit') {
+        self.clickRedditCommentButton(postEl, callback);
+        return;
+      }
       // Search comment button — try light DOM, then shadow DOM, then parent
       var btn = isShreddit ? querySelectorDeep(postEl, selector) : postEl.querySelector(selector);
       if (!btn) {
@@ -2635,38 +2792,226 @@
       });
     },
 
+    getRedditPageType: function () {
+      var path = window.location.pathname;
+      if (/\/comments\//.test(path)) return 'comments';
+      if (/\/submit/.test(path)) return 'submit';
+      return 'feed';
+    },
+
+    clickRedditCommentButton: function (postEl, callback) {
+      var self = this;
+      var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+      var btn = null;
+
+      // Strategy 1: Shadow DOM search for comment button/link
+      if (isShreddit) {
+        var commentSelectors = platformConfig.redditCommentButtonSelectors || [];
+        for (var i = 0; i < commentSelectors.length; i++) {
+          if (postEl.shadowRoot) {
+            btn = postEl.shadowRoot.querySelector(commentSelectors[i]);
+          }
+          if (!btn) btn = querySelectorDeepRecursive(postEl, commentSelectors[i], 3);
+          if (btn) break;
+        }
+      }
+
+      // Strategy 2: Light DOM search in parent/sibling area
+      if (!btn && postEl.parentElement) {
+        var commentSelectors2 = platformConfig.redditCommentButtonSelectors || [];
+        for (var j = 0; j < commentSelectors2.length; j++) {
+          btn = postEl.parentElement.querySelector(commentSelectors2[j]);
+          if (btn) break;
+        }
+        // Also try finding any comment/reply text button near the post
+        if (!btn) {
+          var nearBtns = postEl.parentElement.querySelectorAll('button, a[role="button"], a');
+          var postRect = postEl.getBoundingClientRect();
+          for (var k = 0; k < nearBtns.length; k++) {
+            var nr = nearBtns[k].getBoundingClientRect();
+            if (nr.top >= postRect.top && nr.bottom <= postRect.bottom + 60) {
+              var ntxt = (nearBtns[k].textContent || '').toLowerCase().trim();
+              if (ntxt.indexOf('comment') !== -1 || ntxt.match(/\d+\s*comment/)) {
+                btn = nearBtns[k];
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Strategy 3: For feed pages, find the comments link on the post
+      if (!btn) {
+        var hrefAttr = '';
+        if (isShreddit) {
+          hrefAttr = postEl.getAttribute('permalink') || postEl.getAttribute('href') || '';
+          if (hrefAttr && !/^https?:\/\//.test(hrefAttr) && hrefAttr.charAt(0) === '/') {
+            hrefAttr = 'https://www.reddit.com' + hrefAttr;
+          }
+        }
+        if (!hrefAttr) {
+          var links = isShreddit ? querySelectorAllDeepRecursive(postEl, 'a[href*="/comments/"]', 3) : postEl.querySelectorAll('a[href*="/comments/"]');
+          if (links.length > 0) hrefAttr = links[0].getAttribute('href') || '';
+        }
+        if (hrefAttr && hrefAttr.indexOf('/comments/') !== -1) {
+          AutomationEngine.addLog('Navigating to comments page: ' + hrefAttr.substring(0, 60));
+          window.location.href = hrefAttr;
+          return;
+        }
+      }
+
+      if (!btn) { console.log('[SAIC-Reddit] No comment button found'); callback(null); return; }
+
+      humanMouseMove(btn, function () {
+        self.redditClick(btn, function () {
+          console.log('[SAIC-Reddit] Clicked comment button');
+          var attempts = 0, maxAttempts = 15;
+          var findField = function () {
+            attempts++;
+            var field = self.findRedditReplyField(postEl);
+            if (field) callback(field);
+            else if (attempts < maxAttempts) bgTimeout(findField, 300);
+            else { console.log('[SAIC-Reddit] No reply field after clicking comment'); callback(null); }
+          };
+          bgTimeout(findField, 500);
+        });
+      });
+    },
+
+    findRedditReplyField: function (postEl) {
+      var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+      var field = null;
+      var postRect = postEl.getBoundingClientRect();
+
+      // Strategy 1: Shadow DOM recursive search
+      if (isShreddit) {
+        var shadowSelectors = ['textarea', '[contenteditable="true"]', '[role="textbox"]', 'textarea[name="text"]'];
+        for (var i = 0; i < shadowSelectors.length; i++) {
+          field = querySelectorDeepRecursive(postEl, shadowSelectors[i], 4);
+          if (field && field.getBoundingClientRect().width > 0) return field;
+          field = null;
+        }
+      }
+
+      // Strategy 2: Search parent/sibling area by proximity
+      var searchRoot = postEl.parentElement;
+      if (searchRoot && searchRoot.parentElement) searchRoot = searchRoot.parentElement;
+      if (searchRoot) {
+        var replySelector = 'textarea, [contenteditable="true"], [role="textbox"]';
+        var candidates = searchRoot.querySelectorAll(replySelector);
+        var bestDist = Infinity;
+        for (var j = 0; j < candidates.length; j++) {
+          var r = candidates[j].getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            var dy = r.top - postRect.bottom;
+            if (dy >= -50 && dy <= 400) {
+              var dist = Math.abs(dy) + Math.abs(r.left - postRect.left) * 0.3;
+              if (dist < bestDist) { bestDist = dist; field = candidates[j]; }
+            }
+          }
+        }
+        if (field) return field;
+      }
+
+      // Strategy 3: Global search closest to post
+      var allFields = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]');
+      var bestDist2 = Infinity;
+      for (var k = 0; k < allFields.length; k++) {
+        var r2 = allFields[k].getBoundingClientRect();
+        if (r2.width > 0 && r2.height > 0) {
+          var dy2 = r2.top - postRect.bottom;
+          if (dy2 >= -50 && dy2 <= 500) {
+            var dist2 = Math.abs(dy2) + Math.abs(r2.left - postRect.left) * 0.3;
+            if (dist2 < bestDist2) { bestDist2 = dist2; field = allFields[k]; }
+          }
+        }
+      }
+      return field;
+    },
+
     submitRedditComment: function (postEl, text, subreddit, callback) {
       var self = this;
       if (AutomationEngine.state !== 'running') { callback(false); return; }
-      AutomationEngine.clickCommentButton(postEl, function (replyField) {
-        if (!replyField) { console.log('[SAIC-Reddit] No reply field'); callback(false); return; }
-        self.redditTypeChars(replyField, text, function () {
-          if (AutomationEngine.state !== 'running') { callback(false); return; }
-          bgTimeout(function () {
-            var selector = platformConfig.submitButtonSelector;
-            if (!selector) { callback(false); return; }
-            var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"], shreddit-post') || postEl;
-            var isShreddit2 = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
-            var btn = isShreddit2 ? querySelectorDeep(container, selector) : container.querySelector(selector);
-            if (!btn) btn = isShreddit2 ? querySelectorDeep(postEl, selector) : postEl.querySelector(selector);
-            if (!btn) {
-              var allBtns = isShreddit2 ? querySelectorAllDeep(container, 'button') : container.querySelectorAll('button');
-              for (var i = 0; i < allBtns.length; i++) {
-                var txt = (allBtns[i].textContent || '').toLowerCase().trim();
-                if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }
-              }
-            }
-            if (!btn) { console.log('[SAIC-Reddit] No submit button'); callback(false); return; }
-            var rect = btn.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Reddit] Submit not visible'); callback(false); return; }
-            humanMouseMove(btn, function () {
-              self.redditClick(btn, function () {
-                console.log('[SAIC-Reddit] Submitted');
-                callback(true);
-              });
-            });
-          }, jitter(randomBetween(800, 2000), 0.2));
+
+      // For feed pages, navigate to comments first
+      var pageType = self.getRedditPageType();
+      if (pageType === 'feed') {
+        AutomationEngine.clickCommentButton(postEl, function (replyField) {
+          if (!replyField) {
+            // clickRedditCommentButton may have navigated — that's fine
+            callback(false);
+            return;
+          }
+          self.typeAndSubmit(postEl, replyField, text, callback);
         });
+        return;
+      }
+
+      // Comments page: use Reddit-specific button finding
+      var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+
+      // Try to find existing reply field first (comments page may already have one)
+      var existingField = self.findRedditReplyField(postEl);
+      if (existingField) {
+        self.typeAndSubmit(postEl, existingField, text, callback);
+        return;
+      }
+
+      // Click comment button to open field
+      if (isShreddit) {
+        self.clickRedditCommentButton(postEl, function (replyField) {
+          if (!replyField) { console.log('[SAIC-Reddit] No reply field'); callback(false); return; }
+          self.typeAndSubmit(postEl, replyField, text, callback);
+        });
+      } else {
+        AutomationEngine.clickCommentButton(postEl, function (replyField) {
+          if (!replyField) { console.log('[SAIC-Reddit] No reply field'); callback(false); return; }
+          self.typeAndSubmit(postEl, replyField, text, callback);
+        });
+      }
+    },
+
+    typeAndSubmit: function (postEl, replyField, text, callback) {
+      var self = this;
+      var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
+      self.redditTypeChars(replyField, text, function () {
+        if (AutomationEngine.state !== 'running') { callback(false); return; }
+        bgTimeout(function () {
+          var btn = null;
+          var submitSelectors = platformConfig.redditSubmitButtonSelectors || ['button[type="submit"]'];
+          var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"], shreddit-post') || postEl;
+
+          // Try each submit selector
+          for (var si = 0; si < submitSelectors.length; si++) {
+            if (isShreddit) {
+              btn = querySelectorDeepRecursive(container, submitSelectors[si], 4);
+              if (!btn) btn = querySelectorDeepRecursive(postEl, submitSelectors[si], 4);
+            }
+            if (!btn) btn = container.querySelector(submitSelectors[si]);
+            if (!btn) btn = postEl.querySelector(submitSelectors[si]);
+            if (btn && btn.getBoundingClientRect().width > 0) break;
+            btn = null;
+          }
+
+          // Fall back to text-based search
+          if (!btn) {
+            var allBtns = isShreddit ? querySelectorAllDeepRecursive(container, 'button', 4) : container.querySelectorAll('button');
+            for (var i = 0; i < allBtns.length; i++) {
+              var txt = (allBtns[i].textContent || '').toLowerCase().trim();
+              if (txt === 'comment' || txt === 'reply' || txt === 'post' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }
+            }
+          }
+
+          if (!btn) { console.log('[SAIC-Reddit] No submit button'); callback(false); return; }
+          var rect = btn.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Reddit] Submit not visible'); callback(false); return; }
+          humanMouseMove(btn, function () {
+            self.redditClick(btn, function () {
+              console.log('[SAIC-Reddit] Submitted');
+              callback(true);
+            });
+          });
+        }, jitter(randomBetween(800, 2000), 0.2));
       });
     },
 
