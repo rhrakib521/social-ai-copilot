@@ -2044,19 +2044,18 @@
       function trySelect() {
         if (self.state !== 'running') { callback(); return; }
         if (attempt >= maxAttempts) {
-          // Dropdown never appeared — clean up and continue
           self.cleanupFailedMention(field, pageName, callback);
           return;
         }
         attempt++;
 
-        var result = self.findMentionDropdown(pageName);
-        if (result) {
-          humanMouseMove(result, function () {
-            result.click();
-            // Wait for LinkedIn to insert the mention chip
-            bgTimeout(callback, 600);
-          });
+        var hasResults = self.checkMentionResults(field);
+        if (hasResults) {
+          // First result is auto-highlighted in LinkedIn's dropdown — press Enter to select
+          field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+          field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, key: 'Enter', keyCode: 13 }));
+          field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter', keyCode: 13 }));
+          bgTimeout(callback, 600);
         } else {
           bgTimeout(trySelect, 300);
         }
@@ -2065,61 +2064,22 @@
       trySelect();
     },
 
-    findMentionDropdown: function (pageName) {
-      // LinkedIn mention dropdown selectors — broad coverage for current DOM
-      var linkedInSelectors = [
-        // Primary: typeahead/results container with list items
-        '.mentions-search-results [role="option"]',
-        '.mentions-search-results li',
-        '[class*="typeahead-v2"] [role="option"]',
-        '[class*="typeahead-v2"] li',
-        '[class*="typeahead"] [role="option"]',
-        '[class*="typeahead"] li',
-        // Secondary: generic listbox options
-        '[role="listbox"] [role="option"]',
-        '.entity-list [role="option"]',
-        '.entity-list li',
-        // Broad fallback: any visible popup with options near the editor
-        '[class*="mentions"] [role="option"]',
-        '[class*="mention"] [role="option"]',
-        '[class*="search-results"] [role="option"]',
-        '[class*="search-results"] li'
-      ];
+    checkMentionResults: function (field) {
+      // LinkedIn reports dropdown state via an a11y announcer element:
+      //   aria-label="3 suggestions found for query: Periscale"
+      //   aria-label="0 suggestions found for query: Periscale"
+      var container = field.closest('.comments-comment-box-comment__text-editor')
+        || (field.closest('.editor-container') ? field.closest('.editor-container').parentElement : null);
+      if (!container) return false;
 
-      for (var i = 0; i < linkedInSelectors.length; i++) {
-        var items = document.querySelectorAll(linkedInSelectors[i]);
-        for (var j = 0; j < items.length; j++) {
-          var item = items[j];
-          if (item.offsetParent !== null && item.offsetHeight > 0) {
-            // Prefer items whose text matches the page name
-            var text = (item.textContent || '').toLowerCase();
-            if (text.indexOf(pageName.toLowerCase()) !== -1) {
-              return item;
-            }
-          }
-        }
-      }
+      var a11y = container.querySelector('[role="status"]');
+      if (!a11y) return false;
 
-      // Fallback: return first visible item from mention-specific selectors only
-      // (avoid generic [role="listbox"] selectors that could match unrelated UI elements)
-      var specificSelectors = [
-        '.mentions-search-results [role="option"]',
-        '.mentions-search-results li',
-        '[class*="typeahead-v2"] [role="option"]',
-        '[class*="typeahead-v2"] li',
-        '[class*="typeahead"] [role="option"]',
-        '[class*="typeahead"] li'
-      ];
-      for (var k = 0; k < specificSelectors.length; k++) {
-        var els = document.querySelectorAll(specificSelectors[k]);
-        for (var m = 0; m < els.length; m++) {
-          if (els[m].offsetParent !== null && els[m].offsetHeight > 0) {
-            return els[m];
-          }
-        }
-      }
+      var label = a11y.getAttribute('aria-label') || '';
+      if (label.indexOf('0 suggestions') !== -1) return false;
+      if (label.indexOf('suggestion') !== -1 && label.indexOf('found') !== -1) return true;
 
-      return null;
+      return false;
     },
 
     cleanupFailedMention: function (field, pageName, callback) {
