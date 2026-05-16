@@ -2100,9 +2100,18 @@
         }
       }
 
-      // If no text match found, return first visible item from any matching selector
-      for (var k = 0; k < linkedInSelectors.length; k++) {
-        var els = document.querySelectorAll(linkedInSelectors[k]);
+      // Fallback: return first visible item from mention-specific selectors only
+      // (avoid generic [role="listbox"] selectors that could match unrelated UI elements)
+      var specificSelectors = [
+        '.mentions-search-results [role="option"]',
+        '.mentions-search-results li',
+        '[class*="typeahead-v2"] [role="option"]',
+        '[class*="typeahead-v2"] li',
+        '[class*="typeahead"] [role="option"]',
+        '[class*="typeahead"] li'
+      ];
+      for (var k = 0; k < specificSelectors.length; k++) {
+        var els = document.querySelectorAll(specificSelectors[k]);
         for (var m = 0; m < els.length; m++) {
           if (els[m].offsetParent !== null && els[m].offsetHeight > 0) {
             return els[m];
@@ -2114,9 +2123,12 @@
     },
 
     cleanupFailedMention: function (field, pageName, callback) {
-      // Press Escape to dismiss any partial mention popup
+      // Press Escape to dismiss any partial mention popup (fire on both field and document
+      // since LinkedIn's typeahead listener may be attached at document level)
       field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
       field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
       // Continue — the @PageName text remains as plain text
       bgTimeout(callback, 300);
     },
