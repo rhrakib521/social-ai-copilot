@@ -2038,12 +2038,14 @@
 
     selectMentionResult: function (field, pageName, callback) {
       var self = this;
-      var maxAttempts = 10; // 10 × 300ms = 3 seconds
+      var maxAttempts = 10;
       var attempt = 0;
 
       function trySelect() {
         if (self.state !== 'running') { callback(); return; }
         if (attempt >= maxAttempts) {
+          console.log('[SAIC-Mention] TIMEOUT — no results after 3s. Dumping diagnostics:');
+          self.dumpMentionDiagnostics(field, pageName);
           self.cleanupFailedMention(field, pageName, callback);
           return;
         }
@@ -2051,17 +2053,101 @@
 
         var hasResults = self.checkMentionResults(field);
         if (hasResults) {
-          // First result is auto-highlighted in LinkedIn's dropdown — press Enter to select
-          field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
-          field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, key: 'Enter', keyCode: 13 }));
-          field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter', keyCode: 13 }));
-          bgTimeout(callback, 600);
+          console.log('[SAIC-Mention] a11y confirmed results. Dumping dropdown DOM:');
+          self.dumpMentionDiagnostics(field, pageName);
+
+          // Try clicking the first visible element containing the page name text
+          var clicked = self.clickMentionResult(pageName);
+          if (clicked) {
+            console.log('[SAIC-Mention] Clicked result successfully');
+            bgTimeout(callback, 600);
+          } else {
+            console.log('[SAIC-Mention] Could not find clickable result');
+            self.cleanupFailedMention(field, pageName, callback);
+          }
         } else {
           bgTimeout(trySelect, 300);
         }
       }
 
       trySelect();
+    },
+
+    dumpMentionDiagnostics: function (field, pageName) {
+      // Log a11y state
+      var container = field.closest('.comments-comment-box-comment__text-editor')
+        || (field.closest('.editor-container') ? field.closest('.editor-container').parentElement : null);
+      if (container) {
+        var a11y = container.querySelector('[role="status"]');
+        console.log('[SAIC-Mention] a11y label:', a11y ? a11y.getAttribute('aria-label') : 'NOT FOUND');
+      }
+
+      // Search entire document for potential dropdown elements
+      var selectors = [
+        '[role="listbox"]', '[role="option"]', '[role="list"]',
+        '[class*="typeahead"]', '[class*="mention"]', '[class*="search-result"]',
+        '[class*="dropdown"]', '[class*="popup"]', '[class*="overlay"]',
+        '[class*="suggest"]', '[class*="autocomplete"]', '[class*="popover"]'
+      ];
+      selectors.forEach(function (sel) {
+        var els = document.querySelectorAll(sel);
+        for (var i = 0; i < els.length; i++) {
+          if (els[i].offsetParent !== null && els[i].offsetHeight > 5) {
+            console.log('[SAIC-Mention] VISIBLE: ' + sel + ' | tag=' + els[i].tagName +
+              ' class="' + els[i].className.substring(0, 80) + '"' +
+              ' text="' + (els[i].textContent || '').substring(0, 60).trim() + '"' +
+              ' outerHTML=' + els[i].outerHTML.substring(0, 200));
+          }
+        }
+      });
+
+      // Also log any visible element containing the page name
+      var all = document.querySelectorAll('*');
+      for (var j = 0; j < all.length; j++) {
+        var el = all[j];
+        if (el.offsetParent !== null && el.children.length < 3) {
+          var text = (el.textContent || '').trim();
+          if (text.length > 0 && text.length < 100 &&
+              text.toLowerCase().indexOf(pageName.toLowerCase()) !== -1 &&
+              !el.querySelector('.ql-editor') && el.tagName !== 'BODY' && el.tagName !== 'HTML') {
+            console.log('[SAIC-Mention] TEXT-MATCH: tag=' + el.tagName +
+              ' class="' + (el.className || '').substring(0, 80) + '"' +
+              ' text="' + text.substring(0, 60) + '"' +
+              ' rect=', el.getBoundingClientRect());
+          }
+        }
+      }
+    },
+
+    clickMentionResult: function (pageName) {
+      // Strategy: find any visible element near the editor containing the page name
+      // that looks like a dropdown result, and click it
+      var all = document.querySelectorAll('*');
+      var fieldRect = document.querySelector('.ql-editor')
+        ? document.querySelector('.ql-editor').getBoundingClientRect()
+        : null;
+
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.offsetParent === null || el.offsetHeight < 5) continue;
+        // Skip the editor itself and large containers
+        if (el.classList && (el.classList.contains('ql-editor') || el.classList.contains('feed-shared-update-v2'))) continue;
+        if (el.tagName === 'BODY' || el.tagName === 'HTML') continue;
+        // Check if it's near the editor (within 400px)
+        if (fieldRect) {
+          var r = el.getBoundingClientRect();
+          if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
+        }
+        var text = (el.textContent || '').trim();
+        if (text.length > 0 && text.length < 200 &&
+            text.toLowerCase().indexOf(pageName.toLowerCase()) !== -1 &&
+            el.children.length < 5) {
+          console.log('[SAIC-Mention] CLICKING: tag=' + el.tagName + ' class="' + (el.className || '').substring(0, 80) + '" text="' + text.substring(0, 60) + '"');
+          humanMouseMove(el, function () { el.click(); });
+          return true;
+        }
+      }
+      return false;
     },
 
     checkMentionResults: function (field) {
