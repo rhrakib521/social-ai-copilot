@@ -2022,6 +2022,7 @@
       // contenteditable (LinkedIn ql-editor, Facebook, etc.)
       // Step 1: Type @ character to trigger mention observer
       field.focus();
+      try { field.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: '@' })); } catch(e) {}
       document.execCommand('insertText', false, '@');
       field.dispatchEvent(new Event('input', { bubbles: true }));
 
