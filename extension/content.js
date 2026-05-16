@@ -2014,64 +2014,123 @@
 
     insertMention: function (field, pageName, callback) {
       var self = this;
+      // Plain text fields (textarea/input) — just type the name, no dropdown
       if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
         self.typeChars(field, pageName, callback);
         return;
       }
-      var mentionText = '@' + pageName;
-      self.typeChars(field, mentionText, function () {
-        self.selectMentionResult(field, callback);
-      });
-    },
+      // contenteditable (LinkedIn ql-editor, Facebook, etc.)
+      // Step 1: Type @ character to trigger mention observer
+      field.focus();
+      try { field.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: '@' })); } catch(e) {}
+      document.execCommand('insertText', false, '@');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
 
-    selectMentionResult: function (field, callback) {
-      var self = this;
+      // Step 2: After a short delay, type the page name characters
       bgTimeout(function () {
         if (self.state !== 'running') { callback(); return; }
-        var clicked = false;
-        var selectors = [];
-        if (platformName === 'linkedin') {
-          selectors = [
-            '.mentions-search-results li:first-child',
-            '.mentions-search-results [role="option"]:first-child',
-            '[class*="typeahead-v2"] li:first-child',
-            '[class*="typeahead"] [role="option"]:first-child',
-            '.entity-list li:first-child'
-          ];
-        } else if (platformName === 'facebook') {
-          selectors = [
-            '[role="listbox"] [role="option"]:first-child',
-            '[class*="mentionsInput"] [role="option"]:first-child'
-          ];
-        } else if (platformName === 'x') {
-          selectors = [
-            '[class*="typeahead"] [role="option"]:first-child',
-            '[role="listbox"] [role="option"]:first-child'
-          ];
-        } else if (platformName === 'reddit') {
-          selectors = [
-            '[class*="mention"] [role="option"]:first-child',
-            '[role="listbox"] [role="option"]:first-child'
-          ];
+        self.typeChars(field, pageName, function () {
+          // Step 3: Try to select from dropdown
+          self.selectMentionResult(field, pageName, callback);
+        });
+      }, 400);
+    },
+
+    selectMentionResult: function (field, pageName, callback) {
+      var self = this;
+      var maxAttempts = 10; // 10 × 300ms = 3 seconds
+      var attempt = 0;
+
+      function trySelect() {
+        if (self.state !== 'running') { callback(); return; }
+        if (attempt >= maxAttempts) {
+          // Dropdown never appeared — clean up and continue
+          self.cleanupFailedMention(field, pageName, callback);
+          return;
         }
-        for (var i = 0; i < selectors.length; i++) {
-          var el = document.querySelector(selectors[i]);
-          if (el && el.offsetParent !== null) {
-            humanMouseMove(el, function () {
-              el.click();
-              bgTimeout(callback, 600);
-            });
-            clicked = true;
-            break;
+        attempt++;
+
+        var result = self.findMentionDropdown(pageName);
+        if (result) {
+          humanMouseMove(result, function () {
+            result.click();
+            // Wait for LinkedIn to insert the mention chip
+            bgTimeout(callback, 600);
+          });
+        } else {
+          bgTimeout(trySelect, 300);
+        }
+      }
+
+      trySelect();
+    },
+
+    findMentionDropdown: function (pageName) {
+      // LinkedIn mention dropdown selectors — broad coverage for current DOM
+      var linkedInSelectors = [
+        // Primary: typeahead/results container with list items
+        '.mentions-search-results [role="option"]',
+        '.mentions-search-results li',
+        '[class*="typeahead-v2"] [role="option"]',
+        '[class*="typeahead-v2"] li',
+        '[class*="typeahead"] [role="option"]',
+        '[class*="typeahead"] li',
+        // Secondary: generic listbox options
+        '[role="listbox"] [role="option"]',
+        '.entity-list [role="option"]',
+        '.entity-list li',
+        // Broad fallback: any visible popup with options near the editor
+        '[class*="mentions"] [role="option"]',
+        '[class*="mention"] [role="option"]',
+        '[class*="search-results"] [role="option"]',
+        '[class*="search-results"] li'
+      ];
+
+      for (var i = 0; i < linkedInSelectors.length; i++) {
+        var items = document.querySelectorAll(linkedInSelectors[i]);
+        for (var j = 0; j < items.length; j++) {
+          var item = items[j];
+          if (item.offsetParent !== null && item.offsetHeight > 0) {
+            // Prefer items whose text matches the page name
+            var text = (item.textContent || '').toLowerCase();
+            if (text.indexOf(pageName.toLowerCase()) !== -1) {
+              return item;
+            }
           }
         }
-        if (!clicked) {
-          field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
-          field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, key: 'Enter', keyCode: 13 }));
-          field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter', keyCode: 13 }));
-          bgTimeout(callback, 600);
+      }
+
+      // Fallback: return first visible item from mention-specific selectors only
+      // (avoid generic [role="listbox"] selectors that could match unrelated UI elements)
+      var specificSelectors = [
+        '.mentions-search-results [role="option"]',
+        '.mentions-search-results li',
+        '[class*="typeahead-v2"] [role="option"]',
+        '[class*="typeahead-v2"] li',
+        '[class*="typeahead"] [role="option"]',
+        '[class*="typeahead"] li'
+      ];
+      for (var k = 0; k < specificSelectors.length; k++) {
+        var els = document.querySelectorAll(specificSelectors[k]);
+        for (var m = 0; m < els.length; m++) {
+          if (els[m].offsetParent !== null && els[m].offsetHeight > 0) {
+            return els[m];
+          }
         }
-      }, 2500);
+      }
+
+      return null;
+    },
+
+    cleanupFailedMention: function (field, pageName, callback) {
+      // Press Escape to dismiss any partial mention popup (fire on both field and document
+      // since LinkedIn's typeahead listener may be attached at document level)
+      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      // Continue — the @PageName text remains as plain text
+      bgTimeout(callback, 300);
     },
 
     findAndClickSubmit: function (postEl, replyField, callback) {
