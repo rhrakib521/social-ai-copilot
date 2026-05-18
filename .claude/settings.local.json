@@ -35,7 +35,16 @@
       "Bash(node -c content.js)",
       "Bash(not exist *)",
       "Bash(curl -s -w \"\\\\n\\\\nHTTP_STATUS:%{http_code}\" \"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer test_key\" -d \"{\\\\\"model\\\\\":\\\\\"gemini-3.1-flash-lite\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"max_tokens\\\\\":10}\")",
-      "Bash(node -c extension/popup.html)"
+      "Bash(node -c extension/popup.html)",
+      "Skill(superpowers:systematic-debugging)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Start-Process \"chrome\" \"chrome://extensions\")",
+      "Skill(brainstorming)",
+      "Skill(writing-plans)",
+      "Skill(subagent-driven-development)",
+      "Bash(git status *)",
+      "Bash(gh pr create --title 'fix: LinkedIn page mention automation with dropdown selection' --body ' *)",
+      "Skill(systematic-debugging)"
     ]
   }
 }
