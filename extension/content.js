@@ -2056,15 +2056,15 @@
           console.log('[SAIC-Mention] a11y confirmed results. Dumping dropdown DOM:');
           self.dumpMentionDiagnostics(field, pageName);
 
-          // Try clicking the first visible element containing the page name text
-          var clicked = self.clickMentionResult(pageName);
-          if (clicked) {
-            console.log('[SAIC-Mention] Clicked result successfully');
-            bgTimeout(callback, 600);
-          } else {
-            console.log('[SAIC-Mention] Could not find clickable result');
-            self.cleanupFailedMention(field, pageName, callback);
-          }
+          self.clickMentionResult(pageName, function (clicked) {
+            if (clicked) {
+              console.log('[SAIC-Mention] Clicked result successfully');
+              bgTimeout(callback, 600);
+            } else {
+              console.log('[SAIC-Mention] Could not click, trying keyboard fallback');
+              self.keyboardSelectMention(field, callback);
+            }
+          });
         } else {
           bgTimeout(trySelect, 300);
         }
@@ -2119,35 +2119,136 @@
       }
     },
 
-    clickMentionResult: function (pageName) {
-      // Strategy: find any visible element near the editor containing the page name
-      // that looks like a dropdown result, and click it
-      var all = document.querySelectorAll('*');
-      var fieldRect = document.querySelector('.ql-editor')
-        ? document.querySelector('.ql-editor').getBoundingClientRect()
-        : null;
+    clickMentionResult: function (pageName, callback) {
+      var self = this;
+      var target = null;
+      var pnLower = pageName.toLowerCase();
 
-      for (var i = 0; i < all.length; i++) {
-        var el = all[i];
-        if (el.offsetParent === null || el.offsetHeight < 5) continue;
-        // Skip the editor itself and large containers
-        if (el.classList && (el.classList.contains('ql-editor') || el.classList.contains('feed-shared-update-v2'))) continue;
-        if (el.tagName === 'BODY' || el.tagName === 'HTML') continue;
-        // Check if it's near the editor (within 400px)
-        if (fieldRect) {
-          var r = el.getBoundingClientRect();
-          if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
-        }
-        var text = (el.textContent || '').trim();
-        if (text.length > 0 && text.length < 200 &&
-            text.toLowerCase().indexOf(pageName.toLowerCase()) !== -1 &&
-            el.children.length < 5) {
-          console.log('[SAIC-Mention] CLICKING: tag=' + el.tagName + ' class="' + (el.className || '').substring(0, 80) + '" text="' + text.substring(0, 60) + '"');
-          humanMouseMove(el, function () { el.click(); });
-          return true;
+      // Strategy 1: role="listbox" → role="option" (most reliable for LinkedIn)
+      var listBoxes = document.querySelectorAll('[role="listbox"]');
+      for (var lb = 0; lb < listBoxes.length && !target; lb++) {
+        if (listBoxes[lb].offsetParent === null) continue;
+        var options = listBoxes[lb].querySelectorAll('[role="option"]');
+        for (var i = 0; i < options.length; i++) {
+          var optText = (options[i].textContent || '').trim().toLowerCase();
+          if (optText.indexOf(pnLower) !== -1) {
+            target = options[i];
+            console.log('[SAIC-Mention] Strategy1 (role=option):', options[i].textContent.trim().substring(0, 60));
+            break;
+          }
         }
       }
-      return false;
+
+      // Strategy 2: Common LinkedIn dropdown selectors
+      if (!target) {
+        var itemSelectors = [
+          '[role="list"] [role="listitem"]',
+          '[class*="typeahead"] [class*="result"]:not([class*="results"])',
+          '[class*="typeahead"] li',
+          '[class*="mention"] [class*="item"]',
+          '[class*="suggest"] [class*="item"]',
+          '[class*="search-result"]'
+        ];
+        for (var s = 0; s < itemSelectors.length && !target; s++) {
+          try {
+            var items = document.querySelectorAll(itemSelectors[s]);
+            for (var j = 0; j < items.length; j++) {
+              if (items[j].offsetParent === null) continue;
+              var t = (items[j].textContent || '').trim().toLowerCase();
+              if (t.indexOf(pnLower) !== -1) {
+                target = items[j];
+                console.log('[SAIC-Mention] Strategy2 (' + itemSelectors[s] + '):', t.substring(0, 60));
+                break;
+              }
+            }
+          } catch(e) {}
+        }
+      }
+
+      // Strategy 3: Brute force — find visible element near editor with matching text
+      if (!target) {
+        var fieldRect = document.querySelector('.ql-editor')
+          ? document.querySelector('.ql-editor').getBoundingClientRect()
+          : null;
+        var all = document.querySelectorAll('*');
+        for (var k = 0; k < all.length; k++) {
+          var el = all[k];
+          if (el.offsetParent === null || el.offsetHeight < 5) continue;
+          if (el.classList && (el.classList.contains('ql-editor') || el.classList.contains('feed-shared-update-v2'))) continue;
+          if (el.tagName === 'BODY' || el.tagName === 'HTML') continue;
+          if (fieldRect) {
+            var r = el.getBoundingClientRect();
+            if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
+          }
+          var text = (el.textContent || '').trim();
+          if (text.length > 0 && text.length < 200 &&
+              text.toLowerCase().indexOf(pnLower) !== -1 &&
+              el.children.length < 5) {
+            target = el;
+            console.log('[SAIC-Mention] Strategy3 (brute): tag=' + el.tagName + ' text="' + text.substring(0, 60) + '"');
+            break;
+          }
+        }
+      }
+
+      if (!target) {
+        console.log('[SAIC-Mention] No target found for: ' + pageName);
+        if (callback) callback(false);
+        return;
+      }
+
+      // Click with full event sequence including proper coordinates
+      self.clickElementProperly(target, function () {
+        if (callback) callback(true);
+      });
+    },
+
+    clickElementProperly: function (el, callback) {
+      var rect = el.getBoundingClientRect();
+      var x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+      var y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+
+      // Hover to activate the item
+      el.dispatchEvent(new MouseEvent('mouseover', {
+        clientX: x, clientY: y, bubbles: true, cancelable: true
+      }));
+      el.dispatchEvent(new MouseEvent('mousemove', {
+        clientX: x, clientY: y, bubbles: true, cancelable: true
+      }));
+
+      // Small delay then full click sequence with coordinates
+      bgTimeout(function () {
+        el.dispatchEvent(new PointerEvent('pointerdown', {
+          clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0, pointerId: 1, pointerType: 'mouse'
+        }));
+        el.dispatchEvent(new MouseEvent('mousedown', {
+          clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0
+        }));
+        el.dispatchEvent(new PointerEvent('pointerup', {
+          clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0, pointerId: 1, pointerType: 'mouse'
+        }));
+        el.dispatchEvent(new MouseEvent('mouseup', {
+          clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0
+        }));
+        el.dispatchEvent(new MouseEvent('click', {
+          clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0
+        }));
+        console.log('[SAIC-Mention] Clicked at coords:', Math.round(x), Math.round(y), 'on', el.tagName);
+        bgTimeout(callback, 100);
+      }, 150);
+    },
+
+    keyboardSelectMention: function (field, callback) {
+      // Fallback: ArrowDown to first result, then Enter
+      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown', keyCode: 40 }));
+      field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowDown', keyCode: 40 }));
+      bgTimeout(function () {
+        field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+        field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter', keyCode: 13 }));
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log('[SAIC-Mention] Keyboard fallback: ArrowDown + Enter');
+        bgTimeout(callback, 600);
+      }, 300);
     },
 
     checkMentionResults: function (field) {
