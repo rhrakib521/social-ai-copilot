@@ -394,7 +394,7 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
   // Mention pages instruction — tell AI to naturally include the page name
   if (mentionPages && mentionPages.length > 0) {
     systemLines.push('');
-    systemLines.push('You MUST naturally include the word "' + mentionPages[0] + '" somewhere in your comment. Work it into the sentence naturally, as if you casually referenced it. For example: "this is exactly what we deal with at ' + mentionPages[0] + '" or "' + mentionPages[0] + ' handles this kind of thing". Do NOT use the @ symbol. Just write the name as a plain word.');
+    systemLines.push('You MUST naturally include the word "' + mentionPages[0] + '" somewhere in your comment, NOT at the very start or very end. Place it mid-sentence so there is text both before and after it. Work it in naturally, as if you casually referenced it. For example: "this is exactly what we deal with at ' + mentionPages[0] + ' and it saves hours" or "tools like ' + mentionPages[0] + ' handle this kind of thing really well". Do NOT use the @ symbol. Just write the name as a plain word.');
   }
   var systemMessage = systemLines.join('\n');
 
