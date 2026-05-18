@@ -1324,6 +1324,14 @@
       if (changes.socialAiCopilot_settings) {
         savedSettings = changes.socialAiCopilot_settings.newValue || {};
       }
+      if (changes.saic_commentHistory && AutomationEngine.panelEl) {
+        var updated = changes.saic_commentHistory.newValue;
+        if (updated) {
+          AutomationEngine.commentHistory = updated;
+          AutomationEngine.purgeOldHistory(AutomationEngine.commentHistory);
+          AutomationEngine.updateHistoryUI();
+        }
+      }
     });
   }
 
@@ -2056,15 +2064,21 @@
           console.log('[SAIC-Mention] a11y confirmed results. Dumping dropdown DOM:');
           self.dumpMentionDiagnostics(field, pageName);
 
-          self.clickMentionResult(pageName, function (clicked) {
-            if (clicked) {
-              console.log('[SAIC-Mention] Clicked result successfully');
-              bgTimeout(callback, 600);
-            } else {
-              console.log('[SAIC-Mention] Could not click, trying keyboard fallback');
-              self.keyboardSelectMention(field, callback);
-            }
-          });
+          // In background tabs, prefer keyboard fallback — coordinate clicks are unreliable
+          if (document.hidden) {
+            console.log('[SAIC-Mention] Background tab: using keyboard fallback');
+            self.keyboardSelectMention(field, callback);
+          } else {
+            self.clickMentionResult(pageName, function (clicked) {
+              if (clicked) {
+                console.log('[SAIC-Mention] Clicked result successfully');
+                bgTimeout(callback, 600);
+              } else {
+                console.log('[SAIC-Mention] Could not click, trying keyboard fallback');
+                self.keyboardSelectMention(field, callback);
+              }
+            });
+          }
         } else {
           bgTimeout(trySelect, 300);
         }
@@ -2127,7 +2141,8 @@
       // Strategy 1: role="listbox" → role="option" (most reliable for LinkedIn)
       var listBoxes = document.querySelectorAll('[role="listbox"]');
       for (var lb = 0; lb < listBoxes.length && !target; lb++) {
-        if (listBoxes[lb].offsetParent === null) continue;
+        // In background tabs offsetParent may be null even for visible elements
+        if (!document.hidden && listBoxes[lb].offsetParent === null) continue;
         var options = listBoxes[lb].querySelectorAll('[role="option"]');
         for (var i = 0; i < options.length; i++) {
           var optText = (options[i].textContent || '').trim().toLowerCase();
@@ -2153,7 +2168,7 @@
           try {
             var items = document.querySelectorAll(itemSelectors[s]);
             for (var j = 0; j < items.length; j++) {
-              if (items[j].offsetParent === null) continue;
+              if (!document.hidden && items[j].offsetParent === null) continue;
               var t = (items[j].textContent || '').trim().toLowerCase();
               if (t.indexOf(pnLower) !== -1) {
                 target = items[j];
@@ -2167,18 +2182,22 @@
 
       // Strategy 3: Brute force — find visible element near editor with matching text
       if (!target) {
-        var fieldRect = document.querySelector('.ql-editor')
-          ? document.querySelector('.ql-editor').getBoundingClientRect()
-          : null;
+        var isBg = document.hidden;
         var all = document.querySelectorAll('*');
         for (var k = 0; k < all.length; k++) {
           var el = all[k];
-          if (el.offsetParent === null || el.offsetHeight < 5) continue;
+          if (!isBg && (el.offsetParent === null || el.offsetHeight < 5)) continue;
           if (el.classList && (el.classList.contains('ql-editor') || el.classList.contains('feed-shared-update-v2'))) continue;
           if (el.tagName === 'BODY' || el.tagName === 'HTML') continue;
-          if (fieldRect) {
-            var r = el.getBoundingClientRect();
-            if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
+          // Skip proximity check in background tabs (getBoundingClientRect returns zeros)
+          if (!isBg) {
+            var fieldRect = document.querySelector('.ql-editor')
+              ? document.querySelector('.ql-editor').getBoundingClientRect()
+              : null;
+            if (fieldRect) {
+              var r = el.getBoundingClientRect();
+              if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
+            }
           }
           var text = (el.textContent || '').trim();
           if (text.length > 0 && text.length < 200 &&
@@ -2205,8 +2224,19 @@
 
     clickElementProperly: function (el, callback) {
       var rect = el.getBoundingClientRect();
-      var x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
-      var y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+      var x, y;
+
+      // In background tabs getBoundingClientRect returns zeros — use offset chain instead
+      if (document.hidden || (rect.width === 0 && rect.height === 0)) {
+        var ox = 0, oy = 0, cur = el;
+        while (cur) { ox += cur.offsetLeft || 0; oy += cur.offsetTop || 0; cur = cur.offsetParent; }
+        x = ox + (el.offsetWidth || 50) * (0.3 + Math.random() * 0.4);
+        y = oy + (el.offsetHeight || 20) * (0.3 + Math.random() * 0.4);
+        console.log('[SAIC-Mention] Background tab: using offset coords', Math.round(x), Math.round(y));
+      } else {
+        x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+        y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+      }
 
       // Hover to activate the item
       el.dispatchEvent(new MouseEvent('mouseover', {
@@ -2233,7 +2263,7 @@
         el.dispatchEvent(new MouseEvent('click', {
           clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0
         }));
-        console.log('[SAIC-Mention] Clicked at coords:', Math.round(x), Math.round(y), 'on', el.tagName);
+        console.log('[SAIC-Mention] Clicked at coords:', Math.round(x), Math.round(y), 'on', el.tagName, 'hidden:', document.hidden);
         bgTimeout(callback, 100);
       }, 150);
     },
@@ -2304,6 +2334,12 @@
       var startY = window.scrollY;
       var distance = targetY - startY;
       if (Math.abs(distance) < 10) { if (callback) callback(); return; }
+      // In background tabs, skip animation — jump instantly
+      if (document.hidden) {
+        window.scrollTo(0, targetY);
+        bgTimeout(function () { if (callback) callback(); }, 200);
+        return;
+      }
       var totalDuration = Math.max(500, Math.min(3000, Math.abs(distance) / (300 + Math.random() * 300) * 1000));
       var startTime = performance.now(), lastPauseAt = 0;
       function step() {
@@ -2324,8 +2360,15 @@
     },
 
     scrollToPost: function (postEl, callback) {
-      var rect = postEl.getBoundingClientRect();
-      this.humanScroll(window.scrollY + rect.top - 100, callback);
+      // Use offsetTop chain in background tabs where getBoundingClientRect returns zeros
+      var offset = 0;
+      if (document.hidden) {
+        var el = postEl;
+        while (el) { offset += el.offsetTop || 0; el = el.offsetParent; }
+      } else {
+        offset = window.scrollY + postEl.getBoundingClientRect().top - 100;
+      }
+      this.humanScroll(offset - 100, callback);
     },
 
     quickAddTarget: function (name, platform, type) {
@@ -2386,8 +2429,19 @@
       this.updateHistoryUI();
     },
 
+    purgeOldHistory: function (entries) {
+      var cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      var changed = false;
+      while (entries.length > 0 && entries[entries.length - 1].timestamp < cutoff) {
+        entries.pop();
+        changed = true;
+      }
+      return changed;
+    },
+
     saveCommentHistory: function () {
       try {
+        this.purgeOldHistory(this.commentHistory);
         chrome.storage.local.set({ saic_commentHistory: this.commentHistory.slice(0, 50) });
       } catch (e) { /* ignore */ }
     },
@@ -2398,6 +2452,9 @@
         chrome.storage.local.get('saic_commentHistory', function (result) {
           if (result && result.saic_commentHistory) {
             self.commentHistory = result.saic_commentHistory;
+            var purged = self.purgeOldHistory(self.commentHistory);
+            self.commentHistory.sort(function (a, b) { return b.timestamp - a.timestamp; });
+            if (purged) self.saveCommentHistory();
             self.updateHistoryUI();
           }
         });
