@@ -708,6 +708,18 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     });
     return true;
   }
+
+  // Activate a tab briefly so LinkedIn renders the mention dropdown in background tabs
+  if (message.type === 'activateTab') {
+    if (sender.tab) {
+      chrome.tabs.update(sender.tab.id, { active: true }, function () {
+        if (sendResponse) sendResponse({ ok: true });
+      });
+    } else {
+      if (sendResponse) sendResponse({ ok: false });
+    }
+    return true;
+  }
 });
 
 // ── Keyboard shortcut ──

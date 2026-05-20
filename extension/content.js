@@ -1408,6 +1408,7 @@
     },
     stats: { commentsMade: 0, startTime: null, postsScanned: 0, postsSkipped: 0 },
     processedPosts: new Set(),
+    _persistedPosts: [], // loaded from chrome.storage for cross-session dedup
     _confirmed: false,
     panelEl: null,
     btnEl: null,
@@ -1419,6 +1420,7 @@
     _abortScroll: false,
     logEntries: [],
     commentHistory: [],
+    _historySyncTimer: null,
 
     loadConfig: function () {
       var settings = savedSettings || {};
@@ -1452,18 +1454,27 @@
       this.processedPosts = new Set();
       this._abortScroll = false;
       this.logEntries = [];
+      // Load persisted commented posts for cross-session dedup
+      this.loadPersistedPosts();
       this.addLog('Started on ' + platformName + ' - interval: ' + this.config.interval + 's');
       console.log('[SAIC-Auto] Started - interval:', this.config.interval + 's, auto:', this.config.autoSubmit);
       this.updateUI();
-      this.runCycle();
+      this.loadCommentHistory();
+      this.startHistorySync();
+      // Load persisted posts first, then start the cycle (avoids race condition)
+      this.loadPersistedPosts(function () {
+        self.runCycle();
+      });
     },
 
     stop: function (reason) {
       this.state = 'stopped';
       this._abortScroll = true;
+      this._restoreVisibility(); // Safety: undo any visibility spoof
       bgClear(this.nextActionTimeout);
       bgClear(this._cdBgTimer);
       clearInterval(this.countdownInterval);
+      clearInterval(this._historySyncTimer);
       this.nextActionTimeout = null;
       this.countdownInterval = null;
       this.nextActionTime = null;
@@ -1525,7 +1536,10 @@
       var all = document.querySelectorAll(platformConfig.postSelector);
       var candidates = [];
       for (var i = 0; i < all.length; i++) {
-        if (!this.processedPosts.has(this.getPostFingerprint(all[i]))) candidates.push(all[i]);
+        var fp = this.getPostFingerprint(all[i]);
+        if (!this.processedPosts.has(fp) && this._persistedPosts.indexOf(fp) === -1) {
+          candidates.push(all[i]);
+        }
       }
       return candidates;
     },
@@ -1567,6 +1581,7 @@
       if (self.state !== 'running') return;
       var postId = self.getPostFingerprint(post);
       self.processedPosts.add(postId);
+      self.persistPostFingerprint(postId);
       self.stats.postsScanned++;
       self.addLog(reason || 'Processing post');
       self.scrollToPost(post, function () {
@@ -1765,6 +1780,19 @@
       if (self.state !== 'running') { callback(false); return; }
       self.clickCommentButton(postEl, function (replyField) {
         if (!replyField) { console.log('[SAIC-Auto] No reply field'); callback(false); return; }
+        // Verify the field is associated with the target post (not a stale one from a previous post)
+        var fieldPost = replyField.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+        if (fieldPost && fieldPost !== postEl) {
+          console.log('[SAIC-Auto] Reply field belongs to a different post, aborting');
+          callback(false);
+          return;
+        }
+        // If field already has content from a previous attempt, clear it
+        if (replyField.textContent && replyField.textContent.trim().length > 0) {
+          replyField.focus();
+          document.execCommand('selectAll', false, null);
+          document.execCommand('delete', false, null);
+        }
         self.typeComment(replyField, text, function () {
           if (self.state !== 'running') { callback(false); return; }
           bgTimeout(function () {
@@ -1856,6 +1884,31 @@
       return { postText: text, author: author, authorHandle: authorInfo.handle, authorProfileUrl: authorInfo.profileUrl, nearbyComments: comments, selectedText: '' };
     },
 
+    // Dismiss any previously open comment editors to avoid typing into the wrong box
+    dismissOpenEditors: function () {
+      // Press Escape to close any open comment field / dropdown
+      document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
+      // Blur any focused ql-editor that belongs to an already-processed post
+      var editors = document.querySelectorAll('.ql-editor[contenteditable="true"]');
+      for (var i = 0; i < editors.length; i++) {
+        var ed = editors[i];
+        if (ed.textContent.trim().length > 0) {
+          var post = ed.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+          if (post && this.processedPosts.has(this.getPostFingerprint(post))) {
+            ed.blur();
+          }
+        }
+      }
+    },
+
+    // Get vertical offset using offsetTop chain (works in background tabs where getBoundingClientRect returns zeros)
+    getElementOffsetTop: function (el) {
+      var offset = 0;
+      while (el) { offset += el.offsetTop || 0; el = el.offsetParent; }
+      return offset;
+    },
+
     clickCommentButton: function (postEl, callback) {
       var self = this;
       var selector = platformConfig.commentButtonSelector;
@@ -1867,6 +1920,10 @@
         self.clickRedditCommentButton(postEl, callback);
         return;
       }
+
+      // Close any previously open comment editors first
+      self.dismissOpenEditors();
+
       // Search comment button — try light DOM, then shadow DOM, then parent
       var btn = isShreddit ? querySelectorDeep(postEl, selector) : postEl.querySelector(selector);
       if (!btn) {
@@ -1876,16 +1933,34 @@
       if (!btn) {
         // Last resort: find nearest button within post visual bounds
         var postRect2 = postEl.getBoundingClientRect();
+        var isBg = document.hidden || (postRect2.width === 0 && postRect2.height === 0);
         var allBtns = document.querySelectorAll(selector);
-        for (var bi = 0; bi < allBtns.length; bi++) {
-          var br = allBtns[bi].getBoundingClientRect();
-          if (br.top >= postRect2.top && br.bottom <= postRect2.bottom + 60) {
-            btn = allBtns[bi];
-            break;
+        if (isBg) {
+          // Background tab: use offset chain to find the button closest to the post
+          var postOffset = self.getElementOffsetTop(postEl);
+          for (var bi = 0; bi < allBtns.length; bi++) {
+            var btnOffset = self.getElementOffsetTop(allBtns[bi]);
+            if (btnOffset >= postOffset && btnOffset <= postOffset + postEl.offsetHeight + 60) {
+              btn = allBtns[bi];
+              break;
+            }
+          }
+        } else {
+          for (var bi2 = 0; bi2 < allBtns.length; bi2++) {
+            var br = allBtns[bi2].getBoundingClientRect();
+            if (br.top >= postRect2.top && br.bottom <= postRect2.bottom + 60) {
+              btn = allBtns[bi2];
+              break;
+            }
           }
         }
       }
       if (!btn) { callback(null); return; }
+
+      // Spoof visibility before clicking so LinkedIn renders the comment editor
+      var wasHidden = document.hidden;
+      if (wasHidden) self._spoofVisibility();
+
       var postRect = postEl.getBoundingClientRect();
       humanMouseMove(btn, function () {
         btn.click();
@@ -1896,21 +1971,44 @@
           var field = null;
           var replySelector = platformConfig.replyFieldSelector;
           if (replySelector) {
+            var isBg2 = document.hidden;
+            var postOffsetTop = self.getElementOffsetTop(postEl);
+            var postHeight = postEl.offsetHeight || 500;
+
             // Tier 1: Search scoped to the exact post element (with shadow DOM piercing for shreddit)
             var postCandidates = isShreddit ? querySelectorAllDeep(postEl, replySelector) : postEl.querySelectorAll(replySelector);
             for (var i = 0; i < postCandidates.length; i++) {
-              var r = postCandidates[i].getBoundingClientRect();
-              if (r.width > 0 && r.height > 0) { field = postCandidates[i]; break; }
+              if (isBg2) {
+                // In background: check that the field is inside this post's DOM subtree
+                // and that offsetTop is within the post's bounds
+                var fOff = self.getElementOffsetTop(postCandidates[i]);
+                if (fOff >= postOffsetTop - 20 && fOff <= postOffsetTop + postHeight + 200) {
+                  field = postCandidates[i];
+                  break;
+                }
+              } else {
+                var r = postCandidates[i].getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) { field = postCandidates[i]; break; }
+              }
             }
             // Tier 2: Check parent container but only fields that visually overlap with the post
             if (!field && postEl.parentElement) {
               var parentCandidates = postEl.parentElement.querySelectorAll(replySelector);
               for (var j = 0; j < parentCandidates.length; j++) {
-                var r2 = parentCandidates[j].getBoundingClientRect();
-                if (r2.width > 0 && r2.height > 0) {
-                  if (r2.top >= postRect.top - 20 && r2.top <= postRect.bottom + 150) {
-                    field = parentCandidates[j];
-                    break;
+                if (isBg2) {
+                  var fOff2 = self.getElementOffsetTop(parentCandidates[j]);
+                  if (fOff2 >= postOffsetTop - 20 && fOff2 <= postOffsetTop + postHeight + 200) {
+                    // Verify this field is in the same parent region as our post
+                    var fieldPost = parentCandidates[j].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+                    if (fieldPost === postEl) { field = parentCandidates[j]; break; }
+                  }
+                } else {
+                  var r2 = parentCandidates[j].getBoundingClientRect();
+                  if (r2.width > 0 && r2.height > 0) {
+                    if (r2.top >= postRect.top - 20 && r2.top <= postRect.bottom + 150) {
+                      field = parentCandidates[j];
+                      break;
+                    }
                   }
                 }
               }
@@ -1920,21 +2018,40 @@
               var allCandidates = document.querySelectorAll(replySelector);
               var bestDist = Infinity;
               for (var k = 0; k < allCandidates.length; k++) {
-                var r3 = allCandidates[k].getBoundingClientRect();
-                if (r3.width > 0 && r3.height > 0) {
-                  var dy = r3.top - postRect.bottom;
-                  var dx = Math.abs(r3.left - postRect.left);
-                  if (dy >= -30 && dy <= 200) {
-                    var dist = Math.abs(dy) + dx * 0.5;
-                    if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
+                if (isBg2) {
+                  var fOff3 = self.getElementOffsetTop(allCandidates[k]);
+                  var dy2 = fOff3 - postOffsetTop;
+                  if (dy2 >= -30 && dy2 <= postHeight + 200) {
+                    // Verify this field is inside our post
+                    var fPost = allCandidates[k].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+                    if (fPost === postEl) {
+                      var dist = Math.abs(dy2);
+                      if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
+                    }
+                  }
+                } else {
+                  var r3 = allCandidates[k].getBoundingClientRect();
+                  if (r3.width > 0 && r3.height > 0) {
+                    var dy3 = r3.top - postRect.bottom;
+                    var dx = Math.abs(r3.left - postRect.left);
+                    if (dy3 >= -30 && dy3 <= 200) {
+                      var dist2 = Math.abs(dy3) + dx * 0.5;
+                      if (dist2 < bestDist) { bestDist = dist2; field = allCandidates[k]; }
+                    }
                   }
                 }
               }
             }
           }
-          if (field) callback(field);
+          if (field) {
+            if (wasHidden) self._restoreVisibility();
+            callback(field);
+          }
           else if (attempts < maxAttempts) bgTimeout(findField, 200);
-          else callback(null);
+          else {
+            if (wasHidden) self._restoreVisibility();
+            callback(null);
+          }
         };
         bgTimeout(findField, 300);
       });
@@ -2020,6 +2137,21 @@
       typeNext();
     },
 
+    // Temporarily override page visibility so LinkedIn renders the mention dropdown
+    _spoofVisibility: function () {
+      try {
+        Object.defineProperty(document, 'hidden', { get: function () { return false; }, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: function () { return 'visible'; }, configurable: true });
+      } catch (e) { /* some browsers lock the prototype */ }
+      document.dispatchEvent(new Event('visibilitychange'));
+    },
+
+    _restoreVisibility: function () {
+      // Delete the instance-level overrides so the prototype getters take over again
+      try { delete document.hidden; } catch (e) {}
+      try { delete document.visibilityState; } catch (e) {}
+    },
+
     insertMention: function (field, pageName, callback) {
       var self = this;
       // Plain text fields (textarea/input) — just type the name, no dropdown
@@ -2028,6 +2160,14 @@
         return;
       }
       // contenteditable (LinkedIn ql-editor, Facebook, etc.)
+      var wasHidden = document.hidden;
+      // Override visibility so LinkedIn's React renders the dropdown even in background tabs
+      if (wasHidden) {
+        self._spoofVisibility();
+        // Also ask background.js to activate this tab so the browser paints
+        chrome.runtime.sendMessage({ type: 'activateTab' });
+      }
+
       // Step 1: Type @ character to trigger mention observer
       field.focus();
       try { field.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: '@' })); } catch(e) {}
@@ -2036,23 +2176,30 @@
 
       // Step 2: After a short delay, type the page name characters
       bgTimeout(function () {
-        if (self.state !== 'running') { callback(); return; }
+        if (self.state !== 'running') {
+          if (wasHidden) self._restoreVisibility();
+          callback();
+          return;
+        }
         self.typeChars(field, pageName, function () {
           // Step 3: Try to select from dropdown
-          self.selectMentionResult(field, pageName, callback);
+          self.selectMentionResult(field, pageName, function () {
+            if (wasHidden) self._restoreVisibility();
+            callback();
+          });
         });
-      }, 400);
+      }, wasHidden ? 800 : 400);
     },
 
     selectMentionResult: function (field, pageName, callback) {
       var self = this;
-      var maxAttempts = 10;
+      var maxAttempts = 12;
       var attempt = 0;
 
       function trySelect() {
         if (self.state !== 'running') { callback(); return; }
         if (attempt >= maxAttempts) {
-          console.log('[SAIC-Mention] TIMEOUT — no results after 3s. Dumping diagnostics:');
+          console.log('[SAIC-Mention] TIMEOUT — no results after 3.6s. Dumping diagnostics:');
           self.dumpMentionDiagnostics(field, pageName);
           self.cleanupFailedMention(field, pageName, callback);
           return;
@@ -2061,24 +2208,19 @@
 
         var hasResults = self.checkMentionResults(field);
         if (hasResults) {
-          console.log('[SAIC-Mention] a11y confirmed results. Dumping dropdown DOM:');
+          console.log('[SAIC-Mention] a11y confirmed results. Attempting click...');
           self.dumpMentionDiagnostics(field, pageName);
 
-          // In background tabs, prefer keyboard fallback — coordinate clicks are unreliable
-          if (document.hidden) {
-            console.log('[SAIC-Mention] Background tab: using keyboard fallback');
-            self.keyboardSelectMention(field, callback);
-          } else {
-            self.clickMentionResult(pageName, function (clicked) {
-              if (clicked) {
-                console.log('[SAIC-Mention] Clicked result successfully');
-                bgTimeout(callback, 600);
-              } else {
-                console.log('[SAIC-Mention] Could not click, trying keyboard fallback');
-                self.keyboardSelectMention(field, callback);
-              }
-            });
-          }
+          // Always try coordinate click first — visibility is spoofed for background tabs
+          self.clickMentionResult(pageName, function (clicked) {
+            if (clicked) {
+              console.log('[SAIC-Mention] Clicked result successfully');
+              bgTimeout(callback, 600);
+            } else {
+              console.log('[SAIC-Mention] Could not click, trying keyboard fallback');
+              self.keyboardSelectMention(field, callback);
+            }
+          });
         } else {
           bgTimeout(trySelect, 300);
         }
@@ -2432,9 +2574,12 @@
     purgeOldHistory: function (entries) {
       var cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
       var changed = false;
-      while (entries.length > 0 && entries[entries.length - 1].timestamp < cutoff) {
-        entries.pop();
-        changed = true;
+      // Entries are sorted newest-first, so old entries are at the end
+      for (var i = entries.length - 1; i >= 0; i--) {
+        if (entries[i].timestamp < cutoff) {
+          entries.splice(i, 1);
+          changed = true;
+        }
       }
       return changed;
     },
@@ -2442,7 +2587,8 @@
     saveCommentHistory: function () {
       try {
         this.purgeOldHistory(this.commentHistory);
-        chrome.storage.local.set({ saic_commentHistory: this.commentHistory.slice(0, 50) });
+        if (this.commentHistory.length > 100) this.commentHistory.length = 100;
+        chrome.storage.local.set({ saic_commentHistory: this.commentHistory.slice(0, 100) });
       } catch (e) { /* ignore */ }
     },
 
@@ -2452,13 +2598,88 @@
         chrome.storage.local.get('saic_commentHistory', function (result) {
           if (result && result.saic_commentHistory) {
             self.commentHistory = result.saic_commentHistory;
-            var purged = self.purgeOldHistory(self.commentHistory);
+            self.purgeOldHistory(self.commentHistory);
             self.commentHistory.sort(function (a, b) { return b.timestamp - a.timestamp; });
-            if (purged) self.saveCommentHistory();
+            self.saveCommentHistory();
             self.updateHistoryUI();
           }
         });
       } catch (e) { /* ignore */ }
+    },
+
+    // Periodic history sync: purge old entries and refresh UI every 60s
+    startHistorySync: function () {
+      var self = this;
+      clearInterval(self._historySyncTimer);
+      self._historySyncTimer = setInterval(function () {
+        if (self.state !== 'running' && self.state !== 'paused') return;
+        var purged = self.purgeOldHistory(self.commentHistory);
+        if (purged) {
+          self.saveCommentHistory();
+          self.updateHistoryUI();
+        }
+        // Re-read from storage to pick up entries from other tabs/sources
+        chrome.storage.local.get('saic_commentHistory', function (result) {
+          if (result && result.saic_commentHistory) {
+            // Merge: add any storage entries not already in memory
+            var existingTimestamps = {};
+            for (var i = 0; i < self.commentHistory.length; i++) {
+              existingTimestamps[self.commentHistory[i].timestamp + '_' + self.commentHistory[i].comment] = true;
+            }
+            var changed = false;
+            for (var j = 0; j < result.saic_commentHistory.length; j++) {
+              var entry = result.saic_commentHistory[j];
+              var key = entry.timestamp + '_' + entry.comment;
+              if (!existingTimestamps[key]) {
+                self.commentHistory.push(entry);
+                changed = true;
+              }
+            }
+            if (changed) {
+              self.purgeOldHistory(self.commentHistory);
+              self.commentHistory.sort(function (a, b) { return b.timestamp - a.timestamp; });
+              if (self.commentHistory.length > 100) self.commentHistory.length = 100;
+              self.updateHistoryUI();
+            }
+          }
+        });
+      }, 60000);
+    },
+
+    // Persist commented post fingerprints for cross-session dedup
+    persistPostFingerprint: function (fp) {
+      if (this._persistedPosts.indexOf(fp) === -1) {
+        this._persistedPosts.push(fp);
+        // Keep only last 500 entries and auto-purge after 7 days
+        if (this._persistedPosts.length > 500) this._persistedPosts.shift();
+        try {
+          chrome.storage.local.set({
+            saic_commentedPosts: this._persistedPosts.slice(-500),
+            saic_commentedPostsTs: Date.now()
+          });
+        } catch (e) { /* ignore */ }
+      }
+    },
+
+    loadPersistedPosts: function (callback) {
+      var self = this;
+      try {
+        chrome.storage.local.get(['saic_commentedPosts', 'saic_commentedPostsTs'], function (result) {
+          if (result && result.saic_commentedPosts) {
+            // Auto-purge if older than 7 days
+            var ts = result.saic_commentedPostsTs || 0;
+            if (Date.now() - ts > 7 * 24 * 60 * 60 * 1000) {
+              self._persistedPosts = [];
+              chrome.storage.local.remove('saic_commentedPosts');
+            } else {
+              self._persistedPosts = result.saic_commentedPosts;
+            }
+          }
+          if (callback) callback();
+        });
+      } catch (e) {
+        if (callback) callback();
+      }
     },
 
     updateHistoryUI: function () {
