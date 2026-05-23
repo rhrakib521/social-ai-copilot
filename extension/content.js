@@ -1317,6 +1317,24 @@
       savedSettings = settings;
       // Initialize automation engine after settings are loaded
       AutomationEngine.init();
+
+      // Reddit: check for pending comment action from feed page navigation
+      if (platformName === 'reddit') {
+        RedditAutoEngine.loadConfig();
+        RedditAutoEngine.loadPendingAction(function (pendingAction) {
+          if (pendingAction && pendingAction.text) {
+            // Auto-start the engine to resume
+            AutomationEngine.state = 'running';
+            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+            AutomationEngine.processedPosts = new Set();
+            AutomationEngine._abortScroll = false;
+            AutomationEngine.logEntries = [];
+            AutomationEngine.addLog('Resuming on comments page');
+            AutomationEngine.updateUI();
+            RedditAutoEngine.resumeOnCommentsPage(pendingAction);
+          }
+        });
+      }
     });
 
     // Keep settings fresh on changes
@@ -1781,11 +1799,15 @@
       self.clickCommentButton(postEl, function (replyField) {
         if (!replyField) { console.log('[SAIC-Auto] No reply field'); callback(false); return; }
         // Verify the field is associated with the target post (not a stale one from a previous post)
-        var fieldPost = replyField.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
-        if (fieldPost && fieldPost !== postEl) {
-          console.log('[SAIC-Auto] Reply field belongs to a different post, aborting');
-          callback(false);
-          return;
+        // X.com: The reply compose box is a SIBLING of the tweet article, not a child,
+        // so closest('article[data-testid="tweet"]') returns null — skip the check for X.
+        if (platformName !== 'x') {
+          var fieldPost = replyField.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+          if (fieldPost && fieldPost !== postEl) {
+            console.log('[SAIC-Auto] Reply field belongs to a different post, aborting');
+            callback(false);
+            return;
+          }
         }
         // If field already has content from a previous attempt, clear it
         if (replyField.textContent && replyField.textContent.trim().length > 0) {
@@ -1889,12 +1911,18 @@
       // Press Escape to close any open comment field / dropdown
       document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
       document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
-      // Blur any focused ql-editor that belongs to an already-processed post
-      var editors = document.querySelectorAll('.ql-editor[contenteditable="true"]');
+      // Blur any focused editors that belong to already-processed posts
+      var editorSelectors = '.ql-editor[contenteditable="true"], .public-DraftEditor-content[contenteditable="true"], [data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_1"]';
+      var editors = document.querySelectorAll(editorSelectors);
       for (var i = 0; i < editors.length; i++) {
         var ed = editors[i];
         if (ed.textContent.trim().length > 0) {
-          var post = ed.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+          // For X.com: the editor is a sibling of the article, so just blur it
+          if (platformName === 'x') {
+            ed.blur();
+            continue;
+          }
+          var post = ed.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"]');
           if (post && this.processedPosts.has(this.getPostFingerprint(post))) {
             ed.blur();
           }
@@ -1965,7 +1993,7 @@
       humanMouseMove(btn, function () {
         btn.click();
         console.log('[SAIC-Auto] Clicked comment button');
-        var attempts = 0, maxAttempts = 10;
+        var attempts = 0, maxAttempts = platformName === 'x' ? 15 : 10;
         var findField = function () {
           attempts++;
           var field = null;
@@ -1998,6 +2026,8 @@
                 if (isBg2) {
                   var fOff2 = self.getElementOffsetTop(parentCandidates[j]);
                   if (fOff2 >= postOffsetTop - 20 && fOff2 <= postOffsetTop + postHeight + 200) {
+                    // X.com: compose area is a sibling of the tweet article, so closest() returns null — accept it
+                    if (platformName === 'x') { field = parentCandidates[j]; break; }
                     // Verify this field is in the same parent region as our post
                     var fieldPost = parentCandidates[j].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
                     if (fieldPost === postEl) { field = parentCandidates[j]; break; }
@@ -2013,7 +2043,7 @@
                 }
               }
             }
-            // Tier 3: Global search with strict proximity — only fields directly below post
+            // Tier 3: Global search with proximity — find closest visible field
             if (!field) {
               var allCandidates = document.querySelectorAll(replySelector);
               var bestDist = Infinity;
@@ -2021,12 +2051,17 @@
                 if (isBg2) {
                   var fOff3 = self.getElementOffsetTop(allCandidates[k]);
                   var dy2 = fOff3 - postOffsetTop;
-                  if (dy2 >= -30 && dy2 <= postHeight + 200) {
-                    // Verify this field is inside our post
-                    var fPost = allCandidates[k].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
-                    if (fPost === postEl) {
+                  if (dy2 >= -30 && dy2 <= postHeight + 400) {
+                    // X.com: compose area is a sibling, skip closest() check
+                    if (platformName === 'x') {
                       var dist = Math.abs(dy2);
                       if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
+                    } else {
+                      var fPost = allCandidates[k].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+                      if (fPost === postEl) {
+                        var dist = Math.abs(dy2);
+                        if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
+                      }
                     }
                   }
                 } else {
@@ -2034,7 +2069,9 @@
                   if (r3.width > 0 && r3.height > 0) {
                     var dy3 = r3.top - postRect.bottom;
                     var dx = Math.abs(r3.left - postRect.left);
-                    if (dy3 >= -30 && dy3 <= 200) {
+                    // Wider vertical range for X.com (compose area can be further away)
+                    var maxDy = platformName === 'x' ? 500 : 200;
+                    if (dy3 >= -30 && dy3 <= maxDy) {
                       var dist2 = Math.abs(dy3) + dx * 0.5;
                       if (dist2 < bestDist) { bestDist = dist2; field = allCandidates[k]; }
                     }
@@ -2159,6 +2196,17 @@
         self.typeChars(field, pageName, callback);
         return;
       }
+
+      // X.com: Skip the dropdown-based mention system.
+      // X.com's mention autocomplete may not work reliably in automation.
+      // Instead, just type the plain text (e.g., "@periscaleai") directly.
+      // The AI prompt already generates the text with the mention name in it,
+      // so just typing it as-is creates a valid @mention in the tweet.
+      if (platformName === 'x') {
+        self.typeChars(field, '@' + pageName, callback);
+        return;
+      }
+
       // contenteditable (LinkedIn ql-editor, Facebook, etc.)
       var wasHidden = document.hidden;
       // Override visibility so LinkedIn's React renders the dropdown even in background tabs
@@ -2453,22 +2501,143 @@
     },
 
     findAndClickSubmit: function (postEl, replyField, callback) {
+      var self = this;
       var selector = platformConfig.submitButtonSelector;
       if (!selector) { callback(false); return; }
-      var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
-      var btn = container.querySelector(selector);
-      if (!btn) btn = postEl.querySelector(selector);
+
+      var btn = null;
+
+      // X.com: The reply compose area is a sibling of the tweet article, not nested.
+      // Search strategies in priority order:
+      // 1. Inside a [role="dialog"] (modal/tweet detail view)
+      // 2. The shared parent container of both the tweet and the compose area
+      // 3. The parent of the reply field itself
+      // 4. Global document search
+      if (platformName === 'x') {
+        // Strategy 1: dialog/modal (tweet detail view)
+        var dialog = replyField.closest('[role="dialog"]');
+        if (dialog) {
+          btn = dialog.querySelector(selector);
+          if (btn && btn.getBoundingClientRect().width > 0) {
+            console.log('[SAIC-Auto] X submit found in dialog');
+          } else { btn = null; }
+        }
+        // Strategy 2: walk up from replyField to find the compose container
+        // The compose box on X.com is typically inside a div sibling to the tweet article,
+        // both children of a shared parent (a <section> or <div> layer).
+        if (!btn) {
+          var composeContainer = replyField.parentElement;
+          // Walk up at most 6 levels looking for the submit button
+          for (var lvl = 0; lvl < 6 && composeContainer && !btn; lvl++) {
+            btn = composeContainer.querySelector(selector);
+            if (btn) {
+              var r = btn.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) btn = null;
+            }
+            if (!btn) composeContainer = composeContainer.parentElement;
+          }
+          if (btn) console.log('[SAIC-Auto] X submit found in compose ancestor');
+        }
+        // Strategy 3: If postEl parent has the compose area as a sibling
+        if (!btn && postEl.parentElement) {
+          btn = postEl.parentElement.querySelector(selector);
+          if (btn) {
+            var r2 = btn.getBoundingClientRect();
+            if (r2.width === 0 || r2.height === 0) btn = null;
+          }
+          if (btn) console.log('[SAIC-Auto] X submit found in post parent');
+        }
+        // Strategy 4: Global search — find any visible submit button, prefer closest to replyField
+        if (!btn) {
+          var allSubmitBtns = document.querySelectorAll(selector);
+          var bestDist = Infinity;
+          var fieldRect = replyField.getBoundingClientRect();
+          for (var si = 0; si < allSubmitBtns.length; si++) {
+            var sr = allSubmitBtns[si].getBoundingClientRect();
+            if (sr.width > 0 && sr.height > 0) {
+              var dy = Math.abs(sr.top - fieldRect.bottom);
+              var dx = Math.abs(sr.left - fieldRect.left);
+              var dist = dy + dx * 0.5;
+              // Must be within 400px below the field
+              if (dy <= 400 && dist < bestDist) {
+                bestDist = dist;
+                btn = allSubmitBtns[si];
+              }
+            }
+          }
+          if (btn) console.log('[SAIC-Auto] X submit found globally');
+        }
+      } else {
+        // Non-X platforms: use original logic
+        var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
+        btn = container.querySelector(selector);
+        if (!btn) btn = postEl.querySelector(selector);
+      }
+
+      // Text-based fallback for all platforms
       if (!btn) {
-        var allBtns = container.querySelectorAll('button');
-        for (var i = 0; i < allBtns.length; i++) {
-          var txt = (allBtns[i].textContent || '').toLowerCase().trim();
-          if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }
+        var searchRoot = platformName === 'x'
+          ? (replyField.closest('[role="dialog"]') || replyField.parentElement || postEl.parentElement || document)
+          : (replyField.closest('[role="dialog"]') || replyField.closest('form') || postEl);
+        if (searchRoot) {
+          var allBtns = searchRoot.querySelectorAll('button');
+          for (var i = 0; i < allBtns.length; i++) {
+            var txt = (allBtns[i].textContent || '').toLowerCase().trim();
+            if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') {
+              var br = allBtns[i].getBoundingClientRect();
+              if (br.width > 0 && br.height > 0) { btn = allBtns[i]; break; }
+            }
+          }
+        }
+        // Global text-based fallback
+        if (!btn) {
+          var globalBtns = document.querySelectorAll('button');
+          var fieldRect2 = replyField.getBoundingClientRect();
+          var bestDist2 = Infinity;
+          for (var gi = 0; gi < globalBtns.length; gi++) {
+            var gb = globalBtns[gi];
+            var gtxt = (gb.textContent || '').toLowerCase().trim();
+            if (gtxt === 'post' || gtxt === 'reply' || gtxt === 'comment' || gtxt === 'submit' || gtxt === 'send') {
+              var gr = gb.getBoundingClientRect();
+              if (gr.width > 0 && gr.height > 0) {
+                var gdy = Math.abs(gr.top - fieldRect2.bottom);
+                if (gdy <= 500) {
+                  var gdist = gdy + Math.abs(gr.left - fieldRect2.left) * 0.5;
+                  if (gdist < bestDist2) { bestDist2 = gdist; btn = gb; }
+                }
+              }
+            }
+          }
         }
       }
-      if (!btn) { console.log('[SAIC-Auto] No submit button'); callback(false); return; }
-      var rect = btn.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Auto] Submit not visible'); callback(false); return; }
-      humanMouseMove(btn, function () { btn.click(); console.log('[SAIC-Auto] Submitted'); callback(true); });
+
+      if (!btn) { console.log('[SAIC-Auto] No submit button found'); callback(false); return; }
+
+      // Wait for the button to be enabled (X.com disables it until Draft.js has content)
+      var submitAttempts = 0;
+      var maxSubmitAttempts = 10;
+      function trySubmit() {
+        submitAttempts++;
+        // Check if button is disabled
+        if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+          if (submitAttempts < maxSubmitAttempts) {
+            console.log('[SAIC-Auto] Submit disabled, waiting... attempt ' + submitAttempts);
+            bgTimeout(trySubmit, 500);
+            return;
+          }
+          console.log('[SAIC-Auto] Submit still disabled after waiting');
+          callback(false);
+          return;
+        }
+        var rect = btn.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Auto] Submit not visible'); callback(false); return; }
+        humanMouseMove(btn, function () {
+          btn.click();
+          console.log('[SAIC-Auto] Submitted');
+          callback(true);
+        });
+      }
+      trySubmit();
     },
 
     humanScroll: function (targetY, callback) {
@@ -3277,6 +3446,70 @@
       return 'feed';
     },
 
+    // Persist pending Reddit comment action so it survives page navigation
+    savePendingAction: function (action) {
+      try {
+        chrome.storage.local.set({ saic_redditPending: action });
+      } catch (e) { /* ignore */ }
+    },
+
+    loadPendingAction: function (callback) {
+      try {
+        chrome.storage.local.get('saic_redditPending', function (result) {
+          if (result && result.saic_redditPending) {
+            chrome.storage.local.remove('saic_redditPending');
+            callback(result.saic_redditPending);
+          } else {
+            callback(null);
+          }
+        });
+      } catch (e) { callback(null); }
+    },
+
+    // Resume automation on a Reddit comments page after navigating from feed
+    resumeOnCommentsPage: function (pendingAction) {
+      var self = this;
+      if (!pendingAction || !pendingAction.text) return;
+
+      AutomationEngine.addLog('Resuming on comments page...');
+
+      // Find the post on this comments page
+      var postEl = document.querySelector('shreddit-post, [data-testid="post-container"], .Post, .thing.link');
+      if (!postEl) {
+        AutomationEngine.addLog('No post found on comments page');
+        AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+        return;
+      }
+
+      // Wait for the page to fully render
+      bgTimeout(function () {
+        if (AutomationEngine.state !== 'running') return;
+        AutomationEngine.scrollToPost(postEl, function () {
+          if (AutomationEngine.state !== 'running') return;
+          // Try to find existing comment field
+          var existingField = self.findRedditReplyField(postEl);
+          if (existingField) {
+            AutomationEngine.addLog('Found comment field, typing...');
+            self.typeAndSubmit(postEl, existingField, pendingAction.text, function (success) {
+              self.afterRedditComment(success, pendingAction.text, postEl, pendingAction.subreddit || '');
+            });
+            return;
+          }
+          // Click the comment button to open the field
+          self.clickRedditCommentButton(postEl, function (replyField) {
+            if (!replyField) {
+              AutomationEngine.addLog('No reply field on comments page');
+              AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+              return;
+            }
+            self.typeAndSubmit(postEl, replyField, pendingAction.text, function (success) {
+              self.afterRedditComment(success, pendingAction.text, postEl, pendingAction.subreddit || '');
+            });
+          });
+        });
+      }, jitter(randomBetween(3000, 6000), 0.2));
+    },
+
     clickRedditCommentButton: function (postEl, callback) {
       var self = this;
       var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
@@ -3360,14 +3593,49 @@
       var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
       var field = null;
       var postRect = postEl.getBoundingClientRect();
+      var isBg = document.hidden || (postRect.width === 0 && postRect.height === 0);
 
-      // Strategy 1: Shadow DOM recursive search
+      // On comments page, the top-level comment composer is a SIBLING of shreddit-post,
+      // often in a shreddit-comment-composer or faceplate-textarea element.
+      // It's NOT inside the shreddit-post element.
+
+      // Strategy 1: Shadow DOM recursive search inside the post element
       if (isShreddit) {
-        var shadowSelectors = ['textarea', '[contenteditable="true"]', '[role="textbox"]', 'textarea[name="text"]'];
+        var shadowSelectors = ['textarea', '[contenteditable="true"]', '[role="textbox"]', 'textarea[name="text"]', 'faceplate-textarea'];
         for (var i = 0; i < shadowSelectors.length; i++) {
           field = querySelectorDeepRecursive(postEl, shadowSelectors[i], 4);
-          if (field && field.getBoundingClientRect().width > 0) return field;
+          if (field) {
+            if (isBg || field.getBoundingClientRect().width > 0) return field;
+          }
           field = null;
+        }
+      }
+
+      // Strategy 1b: Look for dedicated comment composer elements (sibling of post)
+      var composerSelectors = [
+        'shreddit-comment-composer',
+        'shreddit-composer',
+        '[slot="comment-composer"]',
+        'faceplate-textarea',
+        '.commentarea textarea',
+        '.commentarea [role="textbox"]',
+        '[data-testid="comment-composer"]'
+      ];
+      for (var ci = 0; ci < composerSelectors.length; ci++) {
+        var composers = document.querySelectorAll(composerSelectors[ci]);
+        for (var cj = 0; cj < composers.length; cj++) {
+          // Look inside the composer for the actual textarea/field
+          var innerField = composers[cj].querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+          if (innerField) {
+            if (isBg || innerField.getBoundingClientRect().width > 0) return innerField;
+          }
+          // Check shadow root
+          if (composers[cj].shadowRoot) {
+            innerField = composers[cj].shadowRoot.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+            if (innerField) {
+              if (isBg || innerField.getBoundingClientRect().width > 0) return innerField;
+            }
+          }
         }
       }
 
@@ -3375,32 +3643,63 @@
       var searchRoot = postEl.parentElement;
       if (searchRoot && searchRoot.parentElement) searchRoot = searchRoot.parentElement;
       if (searchRoot) {
-        var replySelector = 'textarea, [contenteditable="true"], [role="textbox"]';
+        var replySelector = 'textarea, [contenteditable="true"], [role="textbox"], faceplate-textarea';
         var candidates = searchRoot.querySelectorAll(replySelector);
         var bestDist = Infinity;
         for (var j = 0; j < candidates.length; j++) {
-          var r = candidates[j].getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) {
-            var dy = r.top - postRect.bottom;
-            if (dy >= -50 && dy <= 400) {
-              var dist = Math.abs(dy) + Math.abs(r.left - postRect.left) * 0.3;
-              if (dist < bestDist) { bestDist = dist; field = candidates[j]; }
+          // Pierce shadow roots of candidates
+          var actualField = candidates[j];
+          if (actualField.tagName && actualField.tagName.toLowerCase() === 'faceplate-textarea' && actualField.shadowRoot) {
+            var inner = actualField.shadowRoot.querySelector('textarea');
+            if (inner) actualField = inner;
+          }
+          if (isBg) {
+            var fOff = AutomationEngine.getElementOffsetTop(actualField);
+            var postOffset = AutomationEngine.getElementOffsetTop(postEl);
+            var dy0 = fOff - postOffset;
+            if (dy0 >= -50 && dy0 <= 1000) {
+              var dist0 = Math.abs(dy0);
+              if (dist0 < bestDist) { bestDist = dist0; field = actualField; }
+            }
+          } else {
+            var r = actualField.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+              var dy = r.top - postRect.bottom;
+              if (dy >= -50 && dy <= 800) {
+                var dist = Math.abs(dy) + Math.abs(r.left - postRect.left) * 0.3;
+                if (dist < bestDist) { bestDist = dist; field = actualField; }
+              }
             }
           }
         }
         if (field) return field;
       }
 
-      // Strategy 3: Global search closest to post
-      var allFields = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]');
+      // Strategy 3: Global search — find closest visible textarea/field to the post
+      var allFields = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"], faceplate-textarea');
       var bestDist2 = Infinity;
       for (var k = 0; k < allFields.length; k++) {
-        var r2 = allFields[k].getBoundingClientRect();
-        if (r2.width > 0 && r2.height > 0) {
-          var dy2 = r2.top - postRect.bottom;
-          if (dy2 >= -50 && dy2 <= 500) {
-            var dist2 = Math.abs(dy2) + Math.abs(r2.left - postRect.left) * 0.3;
-            if (dist2 < bestDist2) { bestDist2 = dist2; field = allFields[k]; }
+        var actualField2 = allFields[k];
+        if (actualField2.tagName && actualField2.tagName.toLowerCase() === 'faceplate-textarea' && actualField2.shadowRoot) {
+          var inner2 = actualField2.shadowRoot.querySelector('textarea');
+          if (inner2) actualField2 = inner2;
+        }
+        if (isBg) {
+          var fOff2 = AutomationEngine.getElementOffsetTop(actualField2);
+          var postOffset2 = AutomationEngine.getElementOffsetTop(postEl);
+          var dy2 = fOff2 - postOffset2;
+          if (dy2 >= -50 && dy2 <= 1200) {
+            var dist2 = Math.abs(dy2);
+            if (dist2 < bestDist2) { bestDist2 = dist2; field = actualField2; }
+          }
+        } else {
+          var r2 = actualField2.getBoundingClientRect();
+          if (r2.width > 0 && r2.height > 0) {
+            var dy3 = r2.top - postRect.bottom;
+            if (dy3 >= -50 && dy3 <= 1000) {
+              var dist3 = Math.abs(dy3) + Math.abs(r2.left - postRect.left) * 0.3;
+              if (dist3 < bestDist2) { bestDist2 = dist3; field = actualField2; }
+            }
           }
         }
       }
@@ -3411,15 +3710,21 @@
       var self = this;
       if (AutomationEngine.state !== 'running') { callback(false); return; }
 
-      // For feed pages, navigate to comments first
+      // For feed pages, save pending action and navigate to comments
       var pageType = self.getRedditPageType();
       if (pageType === 'feed') {
-        AutomationEngine.clickCommentButton(postEl, function (replyField) {
+        // Persist the comment text and subreddit so we can resume after navigation
+        self.savePendingAction({ text: text, subreddit: subreddit, timestamp: Date.now() });
+        AutomationEngine.addLog('Navigating to comments page...');
+
+        // Find the comments link and navigate
+        self.clickRedditCommentButton(postEl, function (replyField) {
           if (!replyField) {
-            // clickRedditCommentButton may have navigated — that's fine
+            // clickRedditCommentButton may have navigated — that's fine, pending action saved
             callback(false);
             return;
           }
+          // Inline compose opened on feed (rare but possible)
           self.typeAndSubmit(postEl, replyField, text, callback);
         });
         return;
@@ -3457,38 +3762,108 @@
         bgTimeout(function () {
           var btn = null;
           var submitSelectors = platformConfig.redditSubmitButtonSelectors || ['button[type="submit"]'];
-          var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"], shreddit-post') || postEl;
 
-          // Try each submit selector
-          for (var si = 0; si < submitSelectors.length; si++) {
-            if (isShreddit) {
-              btn = querySelectorDeepRecursive(container, submitSelectors[si], 4);
-              if (!btn) btn = querySelectorDeepRecursive(postEl, submitSelectors[si], 4);
+          // Search containers in priority order
+          // The submit button is typically inside the same composer container as the reply field,
+          // which may be a sibling of shreddit-post, NOT inside it.
+          var containers = [];
+          // 1. Dialog or form containing the field
+          var dlg = replyField.closest('[role="dialog"]');
+          if (dlg) containers.push(dlg);
+          var frm = replyField.closest('form');
+          if (frm) containers.push(frm);
+          // 2. Walk up from the reply field to find the composer container
+          var walkEl = replyField.parentElement;
+          for (var wl = 0; wl < 8 && walkEl; wl++) {
+            containers.push(walkEl);
+            walkEl = walkEl.parentElement;
+          }
+          // 3. The post element and its parent
+          containers.push(postEl);
+          if (postEl.parentElement) containers.push(postEl.parentElement);
+          if (postEl.parentElement && postEl.parentElement.parentElement) containers.push(postEl.parentElement.parentElement);
+
+          // Try each container with each selector
+          for (var si = 0; si < submitSelectors.length && !btn; si++) {
+            for (var ci = 0; ci < containers.length && !btn; ci++) {
+              // Try shadow DOM piercing
+              if (isShreddit) {
+                btn = querySelectorDeepRecursive(containers[ci], submitSelectors[si], 4);
+              }
+              if (!btn) {
+                btn = containers[ci].querySelector(submitSelectors[si]);
+              }
+              if (btn) {
+                var br = btn.getBoundingClientRect();
+                if (br.width === 0 && br.height === 0 && !document.hidden) btn = null;
+              }
             }
-            if (!btn) btn = container.querySelector(submitSelectors[si]);
-            if (!btn) btn = postEl.querySelector(submitSelectors[si]);
-            if (btn && btn.getBoundingClientRect().width > 0) break;
-            btn = null;
           }
 
-          // Fall back to text-based search
+          // Fall back to text-based search in all containers
           if (!btn) {
-            var allBtns = isShreddit ? querySelectorAllDeepRecursive(container, 'button', 4) : container.querySelectorAll('button');
-            for (var i = 0; i < allBtns.length; i++) {
-              var txt = (allBtns[i].textContent || '').toLowerCase().trim();
-              if (txt === 'comment' || txt === 'reply' || txt === 'post' || txt === 'submit' || txt === 'send') { btn = allBtns[i]; break; }
+            for (var ti = 0; ti < containers.length && !btn; ti++) {
+              var allBtns = isShreddit ? querySelectorAllDeepRecursive(containers[ti], 'button', 4) : containers[ti].querySelectorAll('button');
+              for (var i = 0; i < allBtns.length; i++) {
+                var txt = (allBtns[i].textContent || '').toLowerCase().trim();
+                if (txt === 'comment' || txt === 'reply' || txt === 'post' || txt === 'submit' || txt === 'send') {
+                  var bbr = allBtns[i].getBoundingClientRect();
+                  if (bbr.width > 0 || document.hidden) { btn = allBtns[i]; break; }
+                }
+              }
             }
           }
 
-          if (!btn) { console.log('[SAIC-Reddit] No submit button'); callback(false); return; }
+          // Global text-based fallback
+          if (!btn) {
+            var globalBtns = document.querySelectorAll('button');
+            var fieldRect = replyField.getBoundingClientRect();
+            var bestDist = Infinity;
+            for (var gi = 0; gi < globalBtns.length; gi++) {
+              var gtxt = (globalBtns[gi].textContent || '').toLowerCase().trim();
+              if (gtxt === 'comment' || gtxt === 'reply' || gtxt === 'post' || gtxt === 'submit' || gtxt === 'send') {
+                var gr = globalBtns[gi].getBoundingClientRect();
+                if (gr.width > 0 && gr.height > 0) {
+                  var gdy = Math.abs(gr.top - fieldRect.bottom);
+                  if (gdy <= 600) {
+                    var gdist = gdy + Math.abs(gr.left - fieldRect.left) * 0.5;
+                    if (gdist < bestDist) { bestDist = gdist; btn = globalBtns[gi]; }
+                  }
+                }
+              }
+            }
+          }
+
+          if (!btn) { console.log('[SAIC-Reddit] No submit button found'); callback(false); return; }
           var rect = btn.getBoundingClientRect();
-          if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Reddit] Submit not visible'); callback(false); return; }
-          humanMouseMove(btn, function () {
-            self.redditClick(btn, function () {
-              console.log('[SAIC-Reddit] Submitted');
-              callback(true);
+          if (rect.width === 0 && rect.height === 0 && !document.hidden) {
+            console.log('[SAIC-Reddit] Submit not visible');
+            callback(false);
+            return;
+          }
+
+          // Wait for submit button to become enabled after text input
+          var submitAttempts = 0;
+          var maxSubmitAttempts = 8;
+          function tryRedditSubmit() {
+            submitAttempts++;
+            if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+              if (submitAttempts < maxSubmitAttempts) {
+                bgTimeout(tryRedditSubmit, 400);
+                return;
+              }
+              console.log('[SAIC-Reddit] Submit still disabled');
+              callback(false);
+              return;
+            }
+            humanMouseMove(btn, function () {
+              self.redditClick(btn, function () {
+                console.log('[SAIC-Reddit] Submitted');
+                callback(true);
+              });
             });
-          });
+          }
+          tryRedditSubmit();
         }, jitter(randomBetween(800, 2000), 0.2));
       });
     },
