@@ -394,7 +394,13 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
   // Mention pages instruction — tell AI to naturally include the page name
   if (mentionPages && mentionPages.length > 0) {
     systemLines.push('');
-    systemLines.push('You MUST naturally include the word "' + mentionPages[0] + '" somewhere in your comment, NOT at the very start or very end. Place it mid-sentence so there is text both before and after it. Work it in naturally, as if you casually referenced it. For example: "this is exactly what we deal with at ' + mentionPages[0] + ' and it saves hours" or "tools like ' + mentionPages[0] + ' handle this kind of thing really well". Do NOT use the @ symbol. Just write the name as a plain word.');
+    if (platform === 'x') {
+      // X.com: Include @handle for proper mention
+      systemLines.push('You MUST naturally include @' + mentionPages[0] + ' somewhere in your reply, NOT at the very start or very end. Place it mid-sentence. For example: "this is exactly what we built @' + mentionPages[0] + ' to handle" or "tools like @' + mentionPages[0] + ' are really good at this". Include the @ symbol — it creates a proper mention on X.');
+    } else {
+      // LinkedIn/Facebook/Reddit: Plain text mention (no @ symbol)
+      systemLines.push('You MUST naturally include the word "' + mentionPages[0] + '" somewhere in your comment, NOT at the very start or very end. Place it mid-sentence so there is text both before and after it. Work it in naturally, as if you casually referenced it. For example: "this is exactly what we deal with at ' + mentionPages[0] + ' and it saves hours" or "tools like ' + mentionPages[0] + ' handle this kind of thing really well". Do NOT use the @ symbol. Just write the name as a plain word.');
+    }
   }
   var systemMessage = systemLines.join('\n');
 
