@@ -1336,7 +1336,95 @@
       // Initialize automation engine after settings are loaded
       AutomationEngine.init();
 
+      // Check for pending actions from page navigations OR restore running state
+      // Priority: 1) pending actions (tweet detail / Reddit comments) 2) restored state (returning from detail)
+
+      var pendingChecksRemaining = 0;
+      var hasPendingAction = false;
+
+      // X/Twitter: check for pending comment action (arriving on tweet detail page)
+      if (platformName === 'x') {
+        pendingChecksRemaining++;
+        XAutoEngine.loadConfig();
+        XAutoEngine.loadPendingAction(function (pendingAction) {
+          pendingChecksRemaining--;
+          if (pendingAction && pendingAction.context) {
+            hasPendingAction = true;
+            // Auto-start the engine to resume on tweet detail page
+            AutomationEngine.state = 'running';
+            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+            AutomationEngine.processedPosts = new Set();
+            if (pendingAction.fingerprint) {
+              AutomationEngine.processedPosts.add(pendingAction.fingerprint);
+            }
+            AutomationEngine._abortScroll = false;
+            AutomationEngine.logEntries = [];
+            AutomationEngine.addLog('Resuming on tweet detail page');
+            AutomationEngine.updateUI();
+            AutomationEngine.loadPersistedPosts(function () {
+              XAutoEngine.resumeOnTweetDetail(pendingAction);
+            });
+          }
+          checkRestoreState();
+        });
+      }
+
       // Reddit: check for pending comment action from feed page navigation
+      if (platformName === 'reddit') {
+        pendingChecksRemaining++;
+        RedditAutoEngine.loadConfig();
+        RedditAutoEngine.loadPendingAction(function (pendingAction) {
+          pendingChecksRemaining--;
+          if (pendingAction && pendingAction.text) {
+            hasPendingAction = true;
+            AutomationEngine.state = 'running';
+            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+            AutomationEngine.processedPosts = new Set();
+            AutomationEngine._abortScroll = false;
+            AutomationEngine.logEntries = [];
+            AutomationEngine.addLog('Resuming on comments page');
+            AutomationEngine.updateUI();
+            RedditAutoEngine.resumeOnCommentsPage(pendingAction);
+          }
+          checkRestoreState();
+        });
+      }
+
+      // Check if we should restore a previously running engine state
+      // (e.g., returning from tweet detail page via history.back())
+      function checkRestoreState() {
+        if (pendingChecksRemaining > 0 || hasPendingAction) return;
+        // No pending action found — check if we were previously running
+        AutomationEngine.loadState(function (restored) {
+          if (restored) {
+            AutomationEngine.addLog('Resumed on feed');
+            AutomationEngine.updateUI();
+            AutomationEngine.loadCommentHistory();
+            AutomationEngine.startHistorySync();
+            AutomationEngine.loadPersistedPosts(function () {
+              // Wait for feed to render + the configured interval before next cycle
+              var feedDelay = jitter(3000, 0.2);
+              var intervalDelay = jitter(AutomationEngine.config.interval * 1000, 0.2);
+              // Extra pause every few comments
+              var extraPause = (AutomationEngine.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0 && AutomationEngine.stats.commentsMade > 0)
+                ? jitter(randomBetween(5000, 15000), 0.2) : 0;
+              var totalDelay = feedDelay + intervalDelay + extraPause;
+              AutomationEngine.addLog('Next scan in ' + Math.round(totalDelay / 1000) + 's');
+              AutomationEngine.updateCountdown(totalDelay, 'Next in');
+              AutomationEngine.nextActionTimeout = bgTimeout(function () {
+                if (AutomationEngine.state === 'running') {
+                  AutomationEngine.runCycle();
+                }
+              }, totalDelay);
+            });
+          }
+        });
+      }
+
+      // If neither X nor Reddit, check state directly
+      if (platformName !== 'x' && platformName !== 'reddit') {
+        checkRestoreState();
+      }
       if (platformName === 'reddit') {
         RedditAutoEngine.loadConfig();
         RedditAutoEngine.loadPendingAction(function (pendingAction) {
@@ -1350,28 +1438,6 @@
             AutomationEngine.addLog('Resuming on comments page');
             AutomationEngine.updateUI();
             RedditAutoEngine.resumeOnCommentsPage(pendingAction);
-          }
-        });
-      }
-
-      // X/Twitter: check for pending comment action from feed page navigation
-      if (platformName === 'x') {
-        XAutoEngine.loadConfig();
-        XAutoEngine.loadPendingAction(function (pendingAction) {
-          if (pendingAction && pendingAction.context) {
-            // Auto-start the engine to resume on tweet detail page
-            AutomationEngine.state = 'running';
-            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
-            AutomationEngine.processedPosts = new Set();
-            // Re-add the fingerprint so the tweet isn't processed again
-            if (pendingAction.fingerprint) {
-              AutomationEngine.processedPosts.add(pendingAction.fingerprint);
-            }
-            AutomationEngine._abortScroll = false;
-            AutomationEngine.logEntries = [];
-            AutomationEngine.addLog('Resuming on tweet detail page');
-            AutomationEngine.updateUI();
-            XAutoEngine.resumeOnTweetDetail(pendingAction);
           }
         });
       }
@@ -1537,6 +1603,7 @@
       this.nextActionTimeout = null;
       this.countdownInterval = null;
       this.nextActionTime = null;
+      this.clearSavedState();
       this.addLog('Stopped' + (reason ? ': ' + reason : ''));
       this.updateUI();
     },
@@ -3357,6 +3424,60 @@
       this.loadConfig();
       this.createPanel();
       console.log('[SAIC-Auto] Panel created for ' + platformName + ' - ' + this.config.priorityTargets.length + ' targets');
+    },
+
+    // Persist engine state to survive page navigations (X/Reddit detail page navigation)
+    saveState: function () {
+      try {
+        var state = {
+          state: this.state,
+          stats: this.stats,
+          processedPosts: Array.from(this.processedPosts),
+          config: this.config,
+          platform: platformName,
+          timestamp: Date.now()
+        };
+        chrome.storage.local.set({ saic_engineState: state });
+      } catch (e) { /* ignore */ }
+    },
+
+    // Restore engine state after page navigation. Returns true if state was restored.
+    loadState: function (callback) {
+      var self = this;
+      try {
+        chrome.storage.local.get('saic_engineState', function (result) {
+          if (!result || !result.saic_engineState) { callback(false); return; }
+          var saved = result.saic_engineState;
+          // Only restore if saved state is for the same platform and not stale (within 5 min)
+          if (saved.platform !== platformName || Date.now() - saved.timestamp > 300000) {
+            chrome.storage.local.remove('saic_engineState');
+            callback(false);
+            return;
+          }
+          // Only restore if the saved state was 'running' (don't restore idle/stopped/paused)
+          if (saved.state !== 'running') {
+            chrome.storage.local.remove('saic_engineState');
+            callback(false);
+            return;
+          }
+          self.state = 'running';
+          self.stats = saved.stats || { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+          self.processedPosts = new Set(saved.processedPosts || []);
+          self._abortScroll = false;
+          self.logEntries = [];
+          self.config = saved.config || self.config;
+          // Clear saved state so it doesn't persist indefinitely
+          chrome.storage.local.remove('saic_engineState');
+          callback(true);
+        });
+      } catch (e) { callback(false); }
+    },
+
+    // Clear persisted engine state
+    clearSavedState: function () {
+      try {
+        chrome.storage.local.remove('saic_engineState');
+      } catch (e) { /* ignore */ }
     }
   };
 
@@ -3434,6 +3555,9 @@
         timestamp: Date.now()
       });
 
+      // Save engine state so it resumes after history.back() returns to feed
+      AutomationEngine.saveState();
+
       AutomationEngine.addLog('Opening tweet detail...');
       // Navigate to the tweet detail page
       window.location.href = tweetLink;
@@ -3456,6 +3580,7 @@
         var tweetEl = self.findMainTweet();
         if (!tweetEl) {
           AutomationEngine.addLog('No main tweet found on detail page');
+          AutomationEngine.saveState();
           self.navigateBack();
           return;
         }
@@ -3475,6 +3600,7 @@
             if (AutomationEngine.state !== 'running') return;
             if (!tweetEl.isConnected) {
               AutomationEngine.addLog('Tweet removed from DOM');
+              AutomationEngine.saveState();
               self.navigateBack();
               return;
             }
@@ -3485,9 +3611,13 @@
               if (!text) {
                 AutomationEngine.stats.postsSkipped++;
                 AutomationEngine.addLog('Skipped: not business/startup related');
+                AutomationEngine.saveState();
                 self.navigateBack();
                 return;
               }
+
+              // Ensure mention pages are always included
+              text = self.ensureMentionIncluded(text);
 
               if (AutomationEngine.config.autoSubmit) {
                 self.submitCommentOnDetail(tweetEl, text, function (success) {
@@ -3499,6 +3629,7 @@
                     self.afterComment(true, text, tweetEl);
                   } else {
                     AutomationEngine.addLog('Skipped by user');
+                    AutomationEngine.saveState();
                     self.navigateBack();
                   }
                 });
@@ -3665,7 +3796,7 @@
       });
     },
 
-    // After commenting, navigate back to the feed
+    // After commenting, navigate back to the feed quickly
     afterComment: function (success, text, tweetEl) {
       var self = this;
       if (success) {
@@ -3677,13 +3808,42 @@
       if (tweetEl) AutomationEngine.recordComment(tweetEl, text, success);
       AutomationEngine.updateUI();
 
-      // Navigate back to the feed after a delay
-      var delay = jitter(AutomationEngine.config.interval * 1000, 0.2);
-      // Add extra pause every few comments
-      var extraPause = (AutomationEngine.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0)
-        ? jitter(randomBetween(5000, 15000), 0.2) : 0;
+      // Save state BEFORE navigating so it's preserved for the feed page
+      AutomationEngine.saveState();
 
-      self.navigateBack(delay + extraPause);
+      // Go back quickly (2-4s) — the interval wait will happen on the feed page
+      self.navigateBack(jitter(randomBetween(2000, 4000), 0.2));
+    },
+
+    // Ensure mention pages are included in the comment text
+    ensureMentionIncluded: function (text) {
+      var mentionPages = AutomationEngine.config.autoMentionPages || [];
+      if (!mentionPages.length || !text) return text;
+      for (var i = 0; i < mentionPages.length; i++) {
+        var page = mentionPages[i];
+        // Check if the mention is already in the text (with or without @)
+        if (text.indexOf('@' + page) !== -1 || text.toLowerCase().indexOf(page.toLowerCase()) !== -1) {
+          continue; // Already included
+        }
+        // Append the mention naturally at the end of the comment
+        // Add a space before the mention if the text doesn't end with one
+        var lastSentenceEnd = Math.max(
+          text.lastIndexOf('.'),
+          text.lastIndexOf('!'),
+          text.lastIndexOf('?')
+        );
+        if (lastSentenceEnd > text.length * 0.5) {
+          // Insert mention before the last sentence, creating a new sentence
+          var before = text.substring(0, lastSentenceEnd).trim();
+          var after = text.substring(lastSentenceEnd).trim();
+          // Use "cc @page" style which is common on X
+          text = before + '. cc @' + page + ' ' + after;
+        } else {
+          // Append at end
+          text = text.trimEnd() + '\n\ncc @' + page;
+        }
+      }
+      return text;
     },
 
     // Navigate back to the X feed
