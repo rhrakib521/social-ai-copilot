@@ -1353,6 +1353,28 @@
           }
         });
       }
+
+      // X/Twitter: check for pending comment action from feed page navigation
+      if (platformName === 'x') {
+        XAutoEngine.loadConfig();
+        XAutoEngine.loadPendingAction(function (pendingAction) {
+          if (pendingAction && pendingAction.context) {
+            // Auto-start the engine to resume on tweet detail page
+            AutomationEngine.state = 'running';
+            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+            AutomationEngine.processedPosts = new Set();
+            // Re-add the fingerprint so the tweet isn't processed again
+            if (pendingAction.fingerprint) {
+              AutomationEngine.processedPosts.add(pendingAction.fingerprint);
+            }
+            AutomationEngine._abortScroll = false;
+            AutomationEngine.logEntries = [];
+            AutomationEngine.addLog('Resuming on tweet detail page');
+            AutomationEngine.updateUI();
+            XAutoEngine.resumeOnTweetDetail(pendingAction);
+          }
+        });
+      }
     });
 
     // Keep settings fresh on changes
@@ -1485,6 +1507,7 @@
       clearInterval(this.countdownInterval);
       this.loadConfig();
       if (platformName === 'reddit') RedditAutoEngine.loadConfig();
+      if (platformName === 'x') XAutoEngine.loadConfig();
       this.state = 'running';
       this.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
       this.processedPosts = new Set();
@@ -1637,10 +1660,15 @@
         });
         return;
       }
-      // Delegate to RedditAutoEngine for Reddit-specific processing
+      // Delegate to platform-specific engines for multi-page processing
       if (platformName === 'reddit') {
         RedditAutoEngine.loadConfig();
         RedditAutoEngine.processRedditPost(bestPost, bestReason);
+        return;
+      }
+      if (platformName === 'x') {
+        XAutoEngine.loadConfig();
+        XAutoEngine.processXTweet(bestPost, bestReason);
         return;
       }
       self.processPost(bestPost, bestReason);
@@ -3329,6 +3357,351 @@
       this.loadConfig();
       this.createPanel();
       console.log('[SAIC-Auto] Panel created for ' + platformName + ' - ' + this.config.priorityTargets.length + ' targets');
+    }
+  };
+
+  // ══════════════════════════════════════════════════
+  // ── X/Twitter Automation Engine ──
+  // ══════════════════════════════════════════════════
+
+  var XAutoEngine = {
+    config: {},
+
+    loadConfig: function () {
+      var settings = savedSettings || {};
+      var ps = (settings.platformSettings && settings.platformSettings.x) || {};
+      this.config = {
+        interval: Math.max(30, Math.min(300, ps.interval || 60)),
+        stopLimit: ps.stopLimit || 0,
+        autoSubmit: ps.autoSubmit !== false,
+        contentFilter: ps.contentFilter || 'business'
+      };
+    },
+
+    // Determine if we're on a tweet detail page (/user/status/123)
+    getPageType: function () {
+      var path = window.location.pathname;
+      if (/\/status\/\d+/.test(path)) return 'tweet_detail';
+      return 'feed';
+    },
+
+    // Save pending action to survive page navigation
+    savePendingAction: function (action) {
+      try {
+        chrome.storage.local.set({ saic_xPending: action });
+      } catch (e) { /* ignore */ }
+    },
+
+    loadPendingAction: function (callback) {
+      try {
+        chrome.storage.local.get('saic_xPending', function (result) {
+          if (result && result.saic_xPending) {
+            chrome.storage.local.remove('saic_xPending');
+            callback(result.saic_xPending);
+          } else {
+            callback(null);
+          }
+        });
+      } catch (e) { callback(null); }
+    },
+
+    // Main entry: process a tweet post from the feed
+    processXTweet: function (postEl, reason) {
+      var self = this;
+      if (AutomationEngine.state !== 'running') return;
+      var postId = AutomationEngine.getPostFingerprint(postEl);
+      AutomationEngine.processedPosts.add(postId);
+      AutomationEngine.stats.postsScanned++;
+      AutomationEngine.addLog(reason || 'Processing X post');
+
+      // Get the tweet link to navigate to its detail page
+      var tweetLink = getPostLink(postEl, 'x');
+      if (!tweetLink || tweetLink === window.location.href) {
+        // Can't find link — try inline commenting as fallback
+        AutomationEngine.addLog('No tweet link found, trying inline...');
+        AutomationEngine.processPost(postEl, reason);
+        return;
+      }
+
+      // Extract tweet context BEFORE navigating (the DOM will be gone after)
+      var context = AutomationEngine.extractPostContext(postEl);
+
+      // Save pending action with the context so we can comment after page loads
+      self.savePendingAction({
+        tweetLink: tweetLink,
+        context: context,
+        fingerprint: postId,
+        timestamp: Date.now()
+      });
+
+      AutomationEngine.addLog('Opening tweet detail...');
+      // Navigate to the tweet detail page
+      window.location.href = tweetLink;
+    },
+
+    // Resume on a tweet detail page — read the tweet, generate comment, submit, go back
+    resumeOnTweetDetail: function (pendingAction) {
+      var self = this;
+      if (!pendingAction || !pendingAction.context) return;
+
+      AutomationEngine.addLog('Resuming on tweet detail page...');
+
+      // Wait for the page to fully render
+      bgTimeout(function () {
+        if (AutomationEngine.state !== 'running') return;
+
+        // Find the main tweet article on the detail page
+        // On tweet detail pages, the main tweet is the first article[data-testid="tweet"]
+        // that is NOT inside another tweet (i.e., the top-level one)
+        var tweetEl = self.findMainTweet();
+        if (!tweetEl) {
+          AutomationEngine.addLog('No main tweet found on detail page');
+          self.navigateBack();
+          return;
+        }
+
+        // Re-extract context from the detail page (richer info — includes replies)
+        var freshContext = self.extractDetailContext(tweetEl);
+
+        // Merge with saved context (prefer fresh if available)
+        var context = freshContext.postText ? freshContext : pendingAction.context;
+
+        AutomationEngine.scrollToPost(tweetEl, function () {
+          if (AutomationEngine.state !== 'running') return;
+
+          var readDelay = jitter(randomBetween(4000, 10000), 0.15);
+          AutomationEngine.updateCountdown(readDelay, 'Reading tweet...');
+          bgTimeout(function () {
+            if (AutomationEngine.state !== 'running') return;
+            if (!tweetEl.isConnected) {
+              AutomationEngine.addLog('Tweet removed from DOM');
+              self.navigateBack();
+              return;
+            }
+
+            // Classify and generate comment
+            AutomationEngine.classifyAndComment(context, function (text) {
+              if (AutomationEngine.state !== 'running') return;
+              if (!text) {
+                AutomationEngine.stats.postsSkipped++;
+                AutomationEngine.addLog('Skipped: not business/startup related');
+                self.navigateBack();
+                return;
+              }
+
+              if (AutomationEngine.config.autoSubmit) {
+                self.submitCommentOnDetail(tweetEl, text, function (success) {
+                  self.afterComment(success, text, tweetEl);
+                });
+              } else {
+                AutomationEngine.showReviewOverlay(tweetEl, text, function (approved) {
+                  if (approved) {
+                    self.afterComment(true, text, tweetEl);
+                  } else {
+                    AutomationEngine.addLog('Skipped by user');
+                    self.navigateBack();
+                  }
+                });
+              }
+            });
+          }, readDelay);
+        });
+      }, jitter(randomBetween(2000, 4000), 0.2));
+    },
+
+    // Find the main tweet on a detail page
+    findMainTweet: function () {
+      // On tweet detail pages, the main tweet is inside a [data-testid="cellInnerDiv"]
+      // that contains the permalink path segment. It's the first large article.
+      var articles = document.querySelectorAll('article[data-testid="tweet"]');
+      for (var i = 0; i < articles.length; i++) {
+        var article = articles[i];
+        // Skip if this article is nested inside another tweet article
+        var parentArticle = article.parentElement ? article.parentElement.closest('article[data-testid="tweet"]') : null;
+        if (parentArticle && parentArticle !== article) continue;
+
+        // On detail pages, the main tweet is typically the first article
+        // that has a link matching the URL's /status/ pattern
+        var statusLink = article.querySelector('a[href*="/status/"]');
+        if (statusLink) {
+          var href = statusLink.getAttribute('href') || '';
+          // Check if this link matches the current page URL
+          if (window.location.pathname.indexOf(href.replace(/^\//, '')) !== -1 || href.indexOf(window.location.pathname) !== -1) {
+            return article;
+          }
+        }
+      }
+      // Fallback: return the first top-level tweet article
+      for (var j = 0; j < articles.length; j++) {
+        var pa = articles[j].parentElement ? articles[j].parentElement.closest('article[data-testid="tweet"]') : null;
+        if (!pa || pa === articles[j]) return articles[j];
+      }
+      return null;
+    },
+
+    // Extract context from a tweet on the detail page (includes visible replies)
+    extractDetailContext: function (tweetEl) {
+      var text = extractText(tweetEl, 2000);
+      var authorInfo = getAuthorInfo(tweetEl, 'x');
+      var author = authorInfo.name || '';
+      if (authorInfo.handle && authorInfo.handle !== authorInfo.name) {
+        author += ' (@' + authorInfo.handle + ')';
+      }
+
+      // Collect visible replies (other tweet articles on the page)
+      var replies = [];
+      var allArticles = document.querySelectorAll('article[data-testid="tweet"]');
+      for (var i = 0; i < allArticles.length && replies.length < 8; i++) {
+        if (allArticles[i] !== tweetEl) {
+          // Skip nested tweets
+          var nestedParent = allArticles[i].parentElement ? allArticles[i].parentElement.closest('article[data-testid="tweet"]') : null;
+          if (nestedParent && nestedParent !== allArticles[i]) continue;
+          var replyText = extractText(allArticles[i], 500);
+          if (replyText) replies.push(replyText);
+        }
+      }
+
+      return {
+        postText: text,
+        author: author,
+        authorHandle: authorInfo.handle,
+        authorProfileUrl: authorInfo.profileUrl,
+        nearbyComments: replies,
+        selectedText: ''
+      };
+    },
+
+    // Submit a comment on the tweet detail page
+    submitCommentOnDetail: function (tweetEl, text, callback) {
+      var self = this;
+      if (AutomationEngine.state !== 'running') { callback(false); return; }
+
+      // On tweet detail pages, there's a dedicated reply compose area
+      // at the bottom of the page or right below the tweet.
+      // It's usually a [data-testid="tweetTextarea_0"] or similar.
+      self.clickReplyButton(tweetEl, function (replyField) {
+        if (!replyField) {
+          AutomationEngine.addLog('No reply field on tweet detail');
+          callback(false);
+          return;
+        }
+
+        // Type the comment using X-specific typing
+        AutomationEngine.typeComment(replyField, text, function () {
+          if (AutomationEngine.state !== 'running') { callback(false); return; }
+
+          // Wait for Draft.js to process, then submit
+          var preSubmitDelay = jitter(randomBetween(1000, 2500), 0.2);
+          bgTimeout(function () {
+            AutomationEngine.findAndClickSubmit(tweetEl, replyField, callback);
+          }, preSubmitDelay);
+        });
+      });
+    },
+
+    // Click the reply button on the tweet detail page to open the compose area
+    clickReplyButton: function (tweetEl, callback) {
+      // On tweet detail pages, the reply compose area is usually already visible
+      // as a [data-testid="tweetTextarea_0"] element.
+      // Try to find it first without clicking anything.
+      var replySelector = platformConfig.replyFieldSelector;
+      if (replySelector) {
+        var selectors = replySelector.split(',');
+        for (var s = 0; s < selectors.length; s++) {
+          var existing = document.querySelector(selectors[s].trim());
+          if (existing) {
+            var r = existing.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+              // Found an open reply field — use it directly
+              callback(existing);
+              return;
+            }
+          }
+        }
+      }
+
+      // No open reply field — click the reply button on the main tweet
+      var replyBtn = tweetEl.querySelector('[data-testid="reply"]');
+      if (!replyBtn) {
+        // Try the first reply button on the page
+        replyBtn = document.querySelector('[data-testid="reply"]');
+      }
+      if (!replyBtn) {
+        AutomationEngine.addLog('No reply button found');
+        callback(null);
+        return;
+      }
+
+      humanMouseMove(replyBtn, function () {
+        replyBtn.click();
+        AutomationEngine.addLog('Clicked reply button');
+
+        // Wait for the compose area to appear
+        var attempts = 0;
+        var maxAttempts = 15;
+        var findField = function () {
+          attempts++;
+          if (replySelector) {
+            var sels = replySelector.split(',');
+            for (var si = 0; si < sels.length; si++) {
+              var field = document.querySelector(sels[si].trim());
+              if (field) {
+                var fr = field.getBoundingClientRect();
+                if (fr.width > 0 && fr.height > 0) {
+                  callback(field);
+                  return;
+                }
+              }
+            }
+          }
+          if (attempts < maxAttempts) {
+            bgTimeout(findField, 300);
+          } else {
+            AutomationEngine.addLog('Reply field never appeared');
+            callback(null);
+          }
+        };
+        bgTimeout(findField, 400);
+      });
+    },
+
+    // After commenting, navigate back to the feed
+    afterComment: function (success, text, tweetEl) {
+      var self = this;
+      if (success) {
+        AutomationEngine.stats.commentsMade++;
+        AutomationEngine.addLog('Commented: "' + (text || '').substring(0, 50) + '..."');
+      } else {
+        AutomationEngine.addLog('Failed to submit');
+      }
+      if (tweetEl) AutomationEngine.recordComment(tweetEl, text, success);
+      AutomationEngine.updateUI();
+
+      // Navigate back to the feed after a delay
+      var delay = jitter(AutomationEngine.config.interval * 1000, 0.2);
+      // Add extra pause every few comments
+      var extraPause = (AutomationEngine.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0)
+        ? jitter(randomBetween(5000, 15000), 0.2) : 0;
+
+      self.navigateBack(delay + extraPause);
+    },
+
+    // Navigate back to the X feed
+    navigateBack: function (delayMs) {
+      delayMs = delayMs || jitter(randomBetween(3000, 8000), 0.2);
+      AutomationEngine.addLog('Returning to feed in ' + Math.round(delayMs / 1000) + 's...');
+      AutomationEngine.updateCountdown(delayMs, 'Returning to feed in');
+      bgTimeout(function () {
+        if (AutomationEngine.state === 'running') {
+          // Use history.back() for a natural navigation that preserves feed scroll position.
+          // Fallback to /home if history is empty.
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.href = 'https://x.com/home';
+          }
+        }
+      }, delayMs);
     }
   };
 
