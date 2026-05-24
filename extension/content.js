@@ -19,6 +19,13 @@
 
   // ── Text insertion utility ──
   function insertTextAtCursor(field, text) {
+    // X.com: resolve to actual contenteditable element (not wrapper)
+    var currentPlatform = detectPlatform(window.location.href);
+    if (currentPlatform === 'x' && field.getAttribute('contenteditable') !== 'true') {
+      var ce = field.querySelector('[contenteditable="true"]');
+      if (ce) field = ce;
+    }
+
     field.focus();
 
     if (field.tagName === 'TEXTAREA' || field.tagName === 'INPUT') {
@@ -354,22 +361,30 @@
     },
     x: {
       editableFields: [
+        '[data-testid="tweetTextarea_0"] [contenteditable="true"]',
+        '[data-testid="tweetTextarea_1"] [contenteditable="true"]',
+        '.public-DraftEditor-content[contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        '.DraftEditor-root [contenteditable="true"]',
         '[data-testid="tweetTextarea_0"]',
         '[data-testid="tweetTextarea_1"]',
-        '.public-DraftEditor-content[contenteditable="true"]',
         '[placeholder*="Tweet"]',
         '[aria-label*="Tweet text"]'
       ],
       postContainers: [
         '[data-testid="tweet"]',
-        'article[data-testid="tweet"]'
+        'article[data-testid="tweet"]',
+        '[data-testid="tweet"] article'
       ],
       authorSelector: '[data-testid="User-Name"] a span',
       personality: 'You are writing for X (Twitter). Be concise, punchy, and impactful. Respect the character-limited culture even when writing longer posts.',
       postSelector: 'article[data-testid="tweet"]',
       commentButtonSelector: '[data-testid="reply"]',
-      replyFieldSelector: '[data-testid="tweetTextarea_0"], .public-DraftEditor-content[contenteditable="true"]',
-      submitButtonSelector: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"]',
+      // IMPORTANT: contenteditable child selectors must come FIRST.
+      // data-testid="tweetTextarea_0" is a WRAPPER div — the actual editable
+      // element is [contenteditable="true"] inside it.
+      replyFieldSelector: '[data-testid="tweetTextarea_0"] [contenteditable="true"], [data-testid="tweetTextarea_1"] [contenteditable="true"], .public-DraftEditor-content[contenteditable="true"], [contenteditable="true"][role="textbox"], .DraftEditor-root [contenteditable="true"]',
+      submitButtonSelector: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"], [data-testid="tweetButtonSend"]',
       likeCountSelector: '[data-testid="like"], [data-testid="unlike"]',
       retweetCountSelector: '[data-testid="retweet"], [data-testid="unretweet"]',
       handleSelector: '[data-testid="User-Name"] a'
@@ -378,6 +393,8 @@
       editableFields: [
         'textarea[placeholder*="comment" i]',
         'textarea[placeholder*="What" i]',
+        'textarea[placeholder*="Join" i]',
+        'textarea[placeholder*="thought" i]',
         '[role="textbox"][contenteditable="true"]',
         'textarea[name="text"]',
         'textarea#comment-textarea',
@@ -386,6 +403,7 @@
         '.public-DraftEditor-content[contenteditable="true"]',
         '[contenteditable="true"][data-placeholder]',
         '.md textarea',
+        'faceplate-textarea',
         '[contenteditable="true"]'
       ],
       postContainers: [
@@ -400,7 +418,7 @@
       personality: 'You are writing for Reddit. Be authentic, knowledgeable, and community-aware. Match the subreddit culture. Avoid overly marketing language. Use proper formatting with Markdown.',
       postSelector: 'shreddit-post, [data-testid="post-container"], .Post, .thing.link',
       commentButtonSelector: 'a[slot="comments-link"], button[onclick*="comment"], [data-testid="comment-button"], a[aria-label*="comment" i], button[aria-label*="comment" i], a[href*="/comments/"]',
-      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"], textarea[placeholder*="comment" i], [contenteditable="true"][data-placeholder], textarea[placeholder*="What" i], [role="textbox"][contenteditable="true"]',
+      replyFieldSelector: 'textarea[name="text"], textarea#comment-textarea, .public-DraftEditor-content[contenteditable="true"], textarea[placeholder*="comment" i], textarea[placeholder*="Join" i], textarea[placeholder*="What" i], [contenteditable="true"][data-placeholder], [role="textbox"][contenteditable="true"], faceplate-textarea',
       submitButtonSelector: 'button[type="submit"]',
       scoreSelector: '.score, [aria-label="upvote"] + div[title], .score.unvoted',
       commentLinkSelector: 'a.comments, [data-testid="post-comment-link"], a[href*="/comments/"]',
@@ -1553,10 +1571,35 @@
       if (!platformConfig || !platformConfig.postSelector) return [];
       var all = document.querySelectorAll(platformConfig.postSelector);
       var candidates = [];
+      var seenFps = {};
       for (var i = 0; i < all.length; i++) {
-        var fp = this.getPostFingerprint(all[i]);
+        var el = all[i];
+        // X.com: skip nested tweet articles (replies/quotes inside a main tweet)
+        // Only accept top-level tweet articles — those whose closest section or
+        // cellInnerDiv is a direct feed container, not nested inside another tweet.
+        if (platformName === 'x') {
+          // If this article is inside another article[data-testid="tweet"], skip it
+          var parentArticle = el.parentElement ? el.parentElement.closest('article[data-testid="tweet"]') : null;
+          if (parentArticle && parentArticle !== el) continue;
+          // Skip tweets inside reply threads (inside [aria-label*="Timeline"])
+          // that are clearly sub-tweets of an already-expanded conversation
+          var cellInner = el.closest('[data-testid="cellInnerDiv"]');
+          if (cellInner) {
+            // Check if there's another tweet article BEFORE this one in the same cell
+            // (meaning this is a nested reply, not a standalone feed item)
+            var prevSibling = cellInner.previousElementSibling;
+            if (prevSibling && prevSibling.querySelector('article[data-testid="tweet"]')) {
+              // This is a reply in a thread — skip unless it's the first tweet
+              continue;
+            }
+          }
+        }
+        var fp = this.getPostFingerprint(el);
+        // Deduplicate: same fingerprint seen in this scan (multiple DOM elements for same post)
+        if (seenFps[fp]) continue;
+        seenFps[fp] = true;
         if (!this.processedPosts.has(fp) && this._persistedPosts.indexOf(fp) === -1) {
-          candidates.push(all[i]);
+          candidates.push(el);
         }
       }
       return candidates;
@@ -1578,8 +1621,17 @@
       }
       if (!bestPost) {
         self.stats.postsSkipped++;
+        // Mark all skipped candidates as processed so they are not re-evaluated
+        for (var j = 0; j < posts.length; j++) {
+          var skipFp = self.getPostFingerprint(posts[j]);
+          self.processedPosts.add(skipFp);
+        }
+        // Scroll further to find new posts (2-3 viewports for X.com, 1-2 for others)
+        var scrollDist = platformName === 'x'
+          ? window.innerHeight * (2 + Math.random() * 2)
+          : window.innerHeight * (1 + Math.random() * 1.5);
         self.addLog('All below threshold, scrolling...');
-        self.humanScroll(window.scrollY + window.innerHeight * (1 + Math.random() * 1.5), function () {
+        self.humanScroll(window.scrollY + scrollDist, function () {
           if (self.state !== 'running') return;
           self.scheduleNextCycle(jitter(3000, 0.3));
         });
@@ -1615,7 +1667,14 @@
             if (!text) {
               self.stats.postsSkipped++;
               self.addLog('Skipped: not business/startup related');
-              self.scheduleNextCycle(jitter(5000, 0.3));
+              // Scroll to next posts instead of staying on the same one
+              var skipScroll = platformName === 'x'
+                ? window.innerHeight * (1.5 + Math.random() * 1.5)
+                : window.innerHeight * (0.5 + Math.random() * 0.5);
+              self.humanScroll(window.scrollY + skipScroll, function () {
+                if (self.state !== 'running') return;
+                self.scheduleNextCycle(jitter(3000, 0.3));
+              });
               return;
             }
             if (self.config.autoSubmit) {
@@ -1641,8 +1700,14 @@
       }
       if (postEl) self.recordComment(postEl, text, success);
       self.updateUI();
-      var extraPause = (self.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0) ? jitter(randomBetween(5000, 15000), 0.2) : 0;
-      self.scheduleNextCycle(jitter(self.config.interval * 1000, 0.2) + extraPause);
+      // Scroll past the current post so the next cycle finds fresh candidates
+      var postScroll = platformName === 'x'
+        ? window.innerHeight * (1 + Math.random() * 1.5)
+        : window.innerHeight * (0.5 + Math.random() * 0.5);
+      self.humanScroll(window.scrollY + postScroll, function () {
+        var extraPause = (self.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0) ? jitter(randomBetween(5000, 15000), 0.2) : 0;
+        self.scheduleNextCycle(jitter(self.config.interval * 1000, 0.2) + extraPause);
+      });
     },
 
     scheduleNextCycle: function (delayMs) {
@@ -1817,9 +1882,11 @@
         }
         self.typeComment(replyField, text, function () {
           if (self.state !== 'running') { callback(false); return; }
+          // X.com Draft.js needs more time to process the paste and update internal state
+          var preSubmitDelay = platformName === 'x' ? jitter(randomBetween(1000, 2500), 0.2) : jitter(randomBetween(500, 1500), 0.2);
           bgTimeout(function () {
             self.findAndClickSubmit(postEl, replyField, callback);
-          }, jitter(randomBetween(500, 1500), 0.2));
+          }, preSubmitDelay);
         });
       });
     },
@@ -2096,11 +2163,151 @@
 
     typeComment: function (field, text, callback) {
       var self = this;
+
+      // X.com: find the actual contenteditable element (not the wrapper div)
+      // and use a real click + proper caret placement + execCommand('insertText')
+      if (platformName === 'x') {
+        self.typeForX(field, text, callback);
+        return;
+      }
+
       field.focus();
       field.scrollIntoView({ block: 'center' });
       var mentionPages = self.config.autoMentionPages || [];
       var segments = self.splitByMentions(text, mentionPages);
       self.typeSegments(field, segments, 0, callback);
+    },
+
+    // X.com typing: the key issue is that data-testid="tweetTextarea_0" is a
+    // WRAPPER div — the actual editable is [contenteditable="true"] inside it.
+    // execCommand('insertText') works with Draft.js ONLY when:
+    // 1. The contenteditable element (not wrapper) is focused
+    // 2. A valid caret/selection exists inside it
+    // 3. The element has been activated by a real or simulated click
+    typeForX: function (field, text, callback) {
+      var self = this;
+
+      // Resolve the actual contenteditable element
+      var editableEl = field;
+      if (field.getAttribute('contenteditable') !== 'true') {
+        // field is the wrapper — find the contenteditable child
+        var ce = field.querySelector('[contenteditable="true"]');
+        if (ce) {
+          editableEl = ce;
+          console.log('[SAIC-Auto] X: resolved contenteditable from wrapper');
+        }
+      }
+
+      // Scroll the field into view
+      editableEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+      // Simulate a real click on the contenteditable to activate Draft.js editor
+      var rect = editableEl.getBoundingClientRect();
+      var clickX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+      var clickY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+
+      var mouseEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+      mouseEvents.forEach(function (evtType) {
+        editableEl.dispatchEvent(new MouseEvent(evtType, {
+          bubbles: true, cancelable: true, view: window,
+          clientX: clickX, clientY: clickY
+        }));
+      });
+
+      // Now focus and set caret
+      bgTimeout(function () {
+        editableEl.focus();
+
+        // Place caret inside the contenteditable (at end or beginning)
+        var sel = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(editableEl);
+        range.collapse(false); // caret at end
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        // Dispatch focus event to ensure Draft.js knows editor is active
+        editableEl.dispatchEvent(new Event('focus', { bubbles: true }));
+
+        // Small delay for Draft.js to process focus
+        bgTimeout(function () {
+          // Re-verify caret is inside the editable
+          var sel2 = window.getSelection();
+          if (!sel2.rangeCount || !editableEl.contains(sel2.anchorNode)) {
+            var range2 = document.createRange();
+            range2.selectNodeContents(editableEl);
+            range2.collapse(false);
+            sel2.removeAllRanges();
+            sel2.addRange(range2);
+          }
+
+          // Now insert text using execCommand('insertText')
+          // This triggers the browser's native input handling, which fires
+          // a trusted 'beforeinput' event that Draft.js processes through
+          // editOnBeforeInput, updating its internal EditorState.
+          var ok = document.execCommand('insertText', false, text);
+          console.log('[SAIC-Auto] X execCommand insertText result:', ok);
+
+          // Verify text was inserted
+          bgTimeout(function () {
+            var fieldText = (editableEl.textContent || '').trim();
+            console.log('[SAIC-Auto] X field text after insert:', fieldText.substring(0, 60));
+            if (fieldText.length === 0) {
+              // Fallback: try character-by-character typing
+              console.log('[SAIC-Auto] X: bulk insert failed, trying char-by-char');
+              self.xTypeCharByChar(editableEl, text, callback);
+              return;
+            }
+            callback();
+          }, jitter(randomBetween(200, 400), 0.15));
+        }, jitter(randomBetween(100, 300), 0.15));
+      }, jitter(randomBetween(100, 200), 0.15));
+    },
+
+    // Fallback for X.com: type characters one at a time with full keyboard event
+    // simulation. Each char fires keydown/keypress/execCommand('insertText')/input/keyup.
+    xTypeCharByChar: function (editableEl, text, callback) {
+      var self = this;
+      var chars = text.split('');
+      var i = 0;
+
+      function typeNext() {
+        if (self.state !== 'running' || i >= chars.length) {
+          if (i >= chars.length) callback();
+          return;
+        }
+        var char = chars[i];
+        var keyCode = char.charCodeAt(0);
+
+        editableEl.dispatchEvent(new KeyboardEvent('keydown', {
+          bubbles: true, key: char, keyCode: keyCode, charCode: keyCode
+        }));
+        editableEl.dispatchEvent(new KeyboardEvent('keypress', {
+          bubbles: true, key: char, keyCode: keyCode, charCode: keyCode
+        }));
+
+        // Re-focus and set caret before each character
+        var sel = window.getSelection();
+        if (!sel.rangeCount || !editableEl.contains(sel.anchorNode)) {
+          var range = document.createRange();
+          range.selectNodeContents(editableEl);
+          range.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+
+        document.execCommand('insertText', false, char);
+        editableEl.dispatchEvent(new Event('input', { bubbles: true }));
+        editableEl.dispatchEvent(new KeyboardEvent('keyup', {
+          bubbles: true, key: char, keyCode: keyCode
+        }));
+
+        i++;
+        var delay = jitter(randomBetween(30, 80), 0.15);
+        if (Math.random() < 0.08) delay += jitter(randomBetween(150, 350), 0.2);
+        bgTimeout(typeNext, delay);
+      }
+      typeNext();
     },
 
     splitByMentions: function (text, mentionPages) {
@@ -2614,18 +2821,56 @@
       if (!btn) { console.log('[SAIC-Auto] No submit button found'); callback(false); return; }
 
       // Wait for the button to be enabled (X.com disables it until Draft.js has content)
+      // X.com needs more attempts because clipboard paste + Draft.js state update takes longer
       var submitAttempts = 0;
-      var maxSubmitAttempts = 10;
+      var maxSubmitAttempts = platformName === 'x' ? 20 : 10;
+      var submitRetryDelay = platformName === 'x' ? 400 : 500;
       function trySubmit() {
         submitAttempts++;
+        // For X.com: re-search for button in case DOM changed after paste
+        if (platformName === 'x' && (btn.disabled || btn.getAttribute('aria-disabled') === 'true') && submitAttempts > 5) {
+          var newBtn = null;
+          // Re-search within dialog or compose area
+          var dlg = replyField.closest('[role="dialog"]');
+          if (dlg) newBtn = dlg.querySelector(selector);
+          if (!newBtn) {
+            var cc = replyField.parentElement;
+            for (var rl = 0; rl < 6 && cc && !newBtn; rl++) {
+              newBtn = cc.querySelector(selector);
+              if (!newBtn) cc = cc.parentElement;
+            }
+          }
+          if (newBtn && newBtn !== btn) {
+            btn = newBtn;
+            console.log('[SAIC-Auto] X re-found submit button');
+          }
+        }
         // Check if button is disabled
         if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
           if (submitAttempts < maxSubmitAttempts) {
             console.log('[SAIC-Auto] Submit disabled, waiting... attempt ' + submitAttempts);
-            bgTimeout(trySubmit, 500);
+            bgTimeout(trySubmit, submitRetryDelay);
             return;
           }
           console.log('[SAIC-Auto] Submit still disabled after waiting');
+
+          // X.com: try force-clicking even if appears disabled
+          // (sometimes aria-disabled is stale after Draft.js state update)
+          if (platformName === 'x') {
+            var fieldText = (replyField.textContent || '').trim();
+            if (fieldText.length > 0) {
+              console.log('[SAIC-Auto] X forcing submit click despite disabled state');
+              var fRect = btn.getBoundingClientRect();
+              if (fRect.width > 0 && fRect.height > 0) {
+                humanMouseMove(btn, function () {
+                  btn.click();
+                  console.log('[SAIC-Auto] X force-submitted');
+                  callback(true);
+                });
+                return;
+              }
+            }
+          }
           callback(false);
           return;
         }
@@ -3477,7 +3722,8 @@
       var postEl = document.querySelector('shreddit-post, [data-testid="post-container"], .Post, .thing.link');
       if (!postEl) {
         AutomationEngine.addLog('No post found on comments page');
-        AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+        // Navigate back to feed so automation can continue
+        window.location.href = 'https://www.reddit.com/';
         return;
       }
 
@@ -3486,26 +3732,52 @@
         if (AutomationEngine.state !== 'running') return;
         AutomationEngine.scrollToPost(postEl, function () {
           if (AutomationEngine.state !== 'running') return;
-          // Try to find existing comment field
-          var existingField = self.findRedditReplyField(postEl);
-          if (existingField) {
-            AutomationEngine.addLog('Found comment field, typing...');
-            self.typeAndSubmit(postEl, existingField, pendingAction.text, function (success) {
-              self.afterRedditComment(success, pendingAction.text, postEl, pendingAction.subreddit || '');
-            });
-            return;
+
+          // On Shreddit comments pages, the comment composer ("Join the conversation")
+          // is often a SIBLING of the post, not inside it. Click it to activate the textarea.
+          var composerEls = document.querySelectorAll('shreddit-comment-composer, [data-testid="comment-composer"], shreddit-composer');
+          for (var ce = 0; ce < composerEls.length; ce++) {
+            var composer = composerEls[ce];
+            var cRect = composer.getBoundingClientRect();
+            if (cRect.width > 0 && cRect.height > 0) {
+              AutomationEngine.addLog('Activating comment composer...');
+              composer.click();
+              if (composer.shadowRoot) {
+                var shadowClick = composer.shadowRoot.querySelector('div, p, span, [role="button"]');
+                if (shadowClick) shadowClick.click();
+              }
+              break;
+            }
           }
-          // Click the comment button to open the field
-          self.clickRedditCommentButton(postEl, function (replyField) {
-            if (!replyField) {
-              AutomationEngine.addLog('No reply field on comments page');
-              AutomationEngine.scheduleNextCycle(jitter(5000, 0.3));
+
+          // Wait for composer to activate, then find the field
+          bgTimeout(function () {
+            if (AutomationEngine.state !== 'running') return;
+            // Try to find existing comment field
+            var existingField = self.findRedditReplyField(postEl);
+            if (existingField) {
+              AutomationEngine.addLog('Found comment field, typing...');
+              self.typeAndSubmit(postEl, existingField, pendingAction.text, function (success) {
+                self.afterRedditComment(success, pendingAction.text, postEl, pendingAction.subreddit || '');
+              });
               return;
             }
-            self.typeAndSubmit(postEl, replyField, pendingAction.text, function (success) {
-              self.afterRedditComment(success, pendingAction.text, postEl, pendingAction.subreddit || '');
+            // Click the comment button to open the field
+            self.clickRedditCommentButton(postEl, function (replyField) {
+              if (!replyField) {
+                AutomationEngine.addLog('No reply field on comments page, going back to feed');
+                // Navigate back to feed instead of getting stuck
+                bgTimeout(function () {
+                  var subPath = pendingAction.subreddit ? '/r/' + pendingAction.subreddit : '/';
+                  window.location.href = 'https://www.reddit.com' + subPath;
+                }, jitter(3000, 0.3));
+                return;
+              }
+              self.typeAndSubmit(postEl, replyField, pendingAction.text, function (success) {
+                self.afterRedditComment(success, pendingAction.text, postEl, pendingAction.subreddit || '');
+              });
             });
-          });
+          }, jitter(randomBetween(1000, 2000), 0.15));
         });
       }, jitter(randomBetween(3000, 6000), 0.2));
     },
@@ -3571,7 +3843,52 @@
         }
       }
 
-      if (!btn) { console.log('[SAIC-Reddit] No comment button found'); callback(null); return; }
+      if (!btn) {
+        // Strategy 4: On comments page, click the "Join the conversation" composer area
+        // to activate the actual textarea inside shreddit-comment-composer
+        var composerEls = document.querySelectorAll('shreddit-comment-composer, [data-testid="comment-composer"], shreddit-composer');
+        for (var ce = 0; ce < composerEls.length; ce++) {
+          var composer = composerEls[ce];
+          var composerRect = composer.getBoundingClientRect();
+          if (composerRect.width > 0 && composerRect.height > 0) {
+            // Click the composer to activate it
+            AutomationEngine.addLog('Clicking comment composer to activate...');
+            composer.click();
+            // Also try clicking inside shadow root if available
+            if (composer.shadowRoot) {
+              var shadowClickable = composer.shadowRoot.querySelector('div, p, span, [role="button"]');
+              if (shadowClickable) shadowClickable.click();
+            }
+            // Wait for textarea to appear after activation
+            var activateAttempts = 0;
+            var findActivatedField = function () {
+              activateAttempts++;
+              var activatedField = self.findRedditReplyField(postEl);
+              if (activatedField) { callback(activatedField); return; }
+              if (activateAttempts < 10) bgTimeout(findActivatedField, 400);
+              else { console.log('[SAIC-Reddit] No reply field after activating composer'); callback(null); }
+            };
+            bgTimeout(findActivatedField, 600);
+            return;
+          }
+        }
+        // Also try clicking any faceplate-textarea that has "Join" placeholder
+        var faceplateEls = document.querySelectorAll('faceplate-textarea');
+        for (var fe = 0; fe < faceplateEls.length; fe++) {
+          var fp = faceplateEls[fe];
+          var fpRect = fp.getBoundingClientRect();
+          if (fpRect.width > 0 && fpRect.height > 0) {
+            fp.click();
+            if (fp.shadowRoot) {
+              var shadowTA = fp.shadowRoot.querySelector('textarea');
+              if (shadowTA) { callback(shadowTA); return; }
+            }
+          }
+        }
+        console.log('[SAIC-Reddit] No comment button found');
+        callback(null);
+        return;
+      }
 
       humanMouseMove(btn, function () {
         self.redditClick(btn, function () {
@@ -3883,8 +4200,24 @@
       }
       if (postEl) AutomationEngine.recordComment(postEl, text, success);
       AutomationEngine.updateUI();
-      var delay = self.getRedditDelay();
-      AutomationEngine.scheduleNextCycle(delay);
+
+      // If we're on a comments page, navigate back to the feed so we can find new posts.
+      // Staying on the comments page would cause the engine to get stuck since there's
+      // only one post (already processed) on this page.
+      var pageType = self.getRedditPageType();
+      if (pageType === 'comments') {
+        var delay = self.getRedditDelay();
+        AutomationEngine.addLog('Navigating back to feed...');
+        bgTimeout(function () {
+          // Navigate back to the subreddit feed or home feed
+          var subPath = subreddit ? '/r/' + subreddit : '/';
+          window.location.href = 'https://www.reddit.com' + subPath;
+        }, delay);
+        return;
+      }
+
+      var delay2 = self.getRedditDelay();
+      AutomationEngine.scheduleNextCycle(delay2);
     }
   };
 
