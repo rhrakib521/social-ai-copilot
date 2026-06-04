@@ -2099,6 +2099,14 @@
       return offset;
     },
 
+    // Check if element is visible — works in background tabs where getBoundingClientRect returns zeros
+    isElVisible: function (el) {
+      if (!el || !el.isConnected) return false;
+      if (document.hidden) return el.offsetWidth > 0 || el.offsetHeight > 0;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    },
+
     clickCommentButton: function (postEl, callback) {
       var self = this;
       var selector = platformConfig.commentButtonSelector;
@@ -2297,9 +2305,18 @@
       editableEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
 
       // Simulate a real click on the contenteditable to activate Draft.js editor
-      var rect = editableEl.getBoundingClientRect();
-      var clickX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
-      var clickY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+      // Use offset chain in background tabs where getBoundingClientRect returns zeros
+      var clickX, clickY;
+      if (document.hidden) {
+        var ox = 0, oy = 0, cur = editableEl;
+        while (cur) { ox += cur.offsetLeft || 0; oy += cur.offsetTop || 0; cur = cur.offsetParent; }
+        clickX = ox + (editableEl.offsetWidth || 50) * (0.3 + Math.random() * 0.4);
+        clickY = oy + (editableEl.offsetHeight || 20) * (0.3 + Math.random() * 0.4);
+      } else {
+        var rect = editableEl.getBoundingClientRect();
+        clickX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+        clickY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+      }
 
       var mouseEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
       mouseEvents.forEach(function (evtType) {
@@ -2820,7 +2837,7 @@
         var dialog = replyField.closest('[role="dialog"]');
         if (dialog) {
           btn = dialog.querySelector(selector);
-          if (btn && btn.getBoundingClientRect().width > 0) {
+          if (btn && self.isElVisible(btn)) {
             console.log('[SAIC-Auto] X submit found in dialog');
           } else { btn = null; }
         }
@@ -2833,8 +2850,7 @@
           for (var lvl = 0; lvl < 6 && composeContainer && !btn; lvl++) {
             btn = composeContainer.querySelector(selector);
             if (btn) {
-              var r = btn.getBoundingClientRect();
-              if (r.width === 0 || r.height === 0) btn = null;
+              if (!self.isElVisible(btn)) btn = null;
             }
             if (!btn) composeContainer = composeContainer.parentElement;
           }
@@ -2844,8 +2860,7 @@
         if (!btn && postEl.parentElement) {
           btn = postEl.parentElement.querySelector(selector);
           if (btn) {
-            var r2 = btn.getBoundingClientRect();
-            if (r2.width === 0 || r2.height === 0) btn = null;
+            if (!self.isElVisible(btn)) btn = null;
           }
           if (btn) console.log('[SAIC-Auto] X submit found in post parent');
         }
@@ -2853,18 +2868,15 @@
         if (!btn) {
           var allSubmitBtns = document.querySelectorAll(selector);
           var bestDist = Infinity;
-          var fieldRect = replyField.getBoundingClientRect();
+          var fieldOff = self.getElementOffsetTop(replyField);
+          var fieldH = replyField.offsetHeight || 50;
           for (var si = 0; si < allSubmitBtns.length; si++) {
-            var sr = allSubmitBtns[si].getBoundingClientRect();
-            if (sr.width > 0 && sr.height > 0) {
-              var dy = Math.abs(sr.top - fieldRect.bottom);
-              var dx = Math.abs(sr.left - fieldRect.left);
-              var dist = dy + dx * 0.5;
-              // Must be within 400px below the field
-              if (dy <= 400 && dist < bestDist) {
-                bestDist = dist;
-                btn = allSubmitBtns[si];
-              }
+            if (!self.isElVisible(allSubmitBtns[si])) continue;
+            var btnOff = self.getElementOffsetTop(allSubmitBtns[si]);
+            var dy = Math.abs(btnOff - (fieldOff + fieldH));
+            if (dy <= 400 && dy < bestDist) {
+              bestDist = dy;
+              btn = allSubmitBtns[si];
             }
           }
           if (btn) console.log('[SAIC-Auto] X submit found globally');
@@ -2886,27 +2898,26 @@
           for (var i = 0; i < allBtns.length; i++) {
             var txt = (allBtns[i].textContent || '').toLowerCase().trim();
             if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') {
-              var br = allBtns[i].getBoundingClientRect();
-              if (br.width > 0 && br.height > 0) { btn = allBtns[i]; break; }
+              if (self.isElVisible(allBtns[i])) { btn = allBtns[i]; break; }
             }
           }
         }
         // Global text-based fallback
         if (!btn) {
           var globalBtns = document.querySelectorAll('button');
-          var fieldRect2 = replyField.getBoundingClientRect();
+          var fieldOff2 = self.getElementOffsetTop(replyField);
+          var fieldH2 = replyField.offsetHeight || 50;
           var bestDist2 = Infinity;
           for (var gi = 0; gi < globalBtns.length; gi++) {
             var gb = globalBtns[gi];
             var gtxt = (gb.textContent || '').toLowerCase().trim();
             if (gtxt === 'post' || gtxt === 'reply' || gtxt === 'comment' || gtxt === 'submit' || gtxt === 'send') {
-              var gr = gb.getBoundingClientRect();
-              if (gr.width > 0 && gr.height > 0) {
-                var gdy = Math.abs(gr.top - fieldRect2.bottom);
-                if (gdy <= 500) {
-                  var gdist = gdy + Math.abs(gr.left - fieldRect2.left) * 0.5;
-                  if (gdist < bestDist2) { bestDist2 = gdist; btn = gb; }
-                }
+              if (!self.isElVisible(gb)) continue;
+              var gOff = self.getElementOffsetTop(gb);
+              var gdy = Math.abs(gOff - (fieldOff2 + fieldH2));
+              if (gdy <= 500) {
+                var gdist = gdy;
+                if (gdist < bestDist2) { bestDist2 = gdist; btn = gb; }
               }
             }
           }
@@ -2955,8 +2966,7 @@
             var fieldText = (replyField.textContent || '').trim();
             if (fieldText.length > 0) {
               console.log('[SAIC-Auto] X forcing submit click despite disabled state');
-              var fRect = btn.getBoundingClientRect();
-              if (fRect.width > 0 && fRect.height > 0) {
+              if (self.isElVisible(btn)) {
                 humanMouseMove(btn, function () {
                   btn.click();
                   console.log('[SAIC-Auto] X force-submitted');
@@ -2969,8 +2979,7 @@
           callback(false);
           return;
         }
-        var rect = btn.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) { console.log('[SAIC-Auto] Submit not visible'); callback(false); return; }
+        if (!self.isElVisible(btn)) { console.log('[SAIC-Auto] Submit not visible'); callback(false); return; }
         humanMouseMove(btn, function () {
           btn.click();
           console.log('[SAIC-Auto] Submitted');
@@ -3707,24 +3716,36 @@
       var self = this;
       if (AutomationEngine.state !== 'running') { callback(false); return; }
 
+      // Spoof visibility so Draft.js processes focus/input events in background tabs
+      var wasHidden = document.hidden;
+      if (wasHidden) AutomationEngine._spoofVisibility();
+
       // On tweet detail pages, there's a dedicated reply compose area
       // at the bottom of the page or right below the tweet.
       // It's usually a [data-testid="tweetTextarea_0"] or similar.
       self.clickReplyButton(tweetEl, function (replyField) {
         if (!replyField) {
           AutomationEngine.addLog('No reply field on tweet detail');
+          if (wasHidden) AutomationEngine._restoreVisibility();
           callback(false);
           return;
         }
 
         // Type the comment using X-specific typing
         AutomationEngine.typeComment(replyField, text, function () {
-          if (AutomationEngine.state !== 'running') { callback(false); return; }
+          if (AutomationEngine.state !== 'running') {
+            if (wasHidden) AutomationEngine._restoreVisibility();
+            callback(false);
+            return;
+          }
 
           // Wait for Draft.js to process, then submit
           var preSubmitDelay = jitter(randomBetween(1000, 2500), 0.2);
           bgTimeout(function () {
-            AutomationEngine.findAndClickSubmit(tweetEl, replyField, callback);
+            AutomationEngine.findAndClickSubmit(tweetEl, replyField, function (result) {
+              if (wasHidden) AutomationEngine._restoreVisibility();
+              callback(result);
+            });
           }, preSubmitDelay);
         });
       });
@@ -3741,8 +3762,7 @@
         for (var s = 0; s < selectors.length; s++) {
           var existing = document.querySelector(selectors[s].trim());
           if (existing) {
-            var r = existing.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0) {
+            if (AutomationEngine.isElVisible(existing)) {
               // Found an open reply field — use it directly
               callback(existing);
               return;
@@ -3777,8 +3797,7 @@
             for (var si = 0; si < sels.length; si++) {
               var field = document.querySelector(sels[si].trim());
               if (field) {
-                var fr = field.getBoundingClientRect();
-                if (fr.width > 0 && fr.height > 0) {
+                if (AutomationEngine.isElVisible(field)) {
                   callback(field);
                   return;
                 }

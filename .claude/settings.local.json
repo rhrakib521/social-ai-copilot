@@ -44,7 +44,10 @@
       "Skill(subagent-driven-development)",
       "Bash(git status *)",
       "Bash(gh pr create --title 'fix: LinkedIn page mention automation with dropdown selection' --body ' *)",
-      "Skill(systematic-debugging)"
+      "Skill(systematic-debugging)",
+      "Bash(xxd \"D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js\")",
+      "Bash(r)",
+      "Bash(powershell -Command \"\\(Get-Content 'D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js' -Raw\\) -replace 'var r = existing\\\\.getBoundingClientRect\\\\\\(\\\\\\);\\\\r?\\\\n\\\\s+if \\\\\\(r\\\\.width > 0 && r\\\\.height > 0\\\\\\) \\\\{\\\\r?\\\\n\\\\s+// Found an open reply field', 'if \\(AutomationEngine.isElVisible\\(existing\\)\\) {`r`n              // Found an open reply field' | Set-Content 'D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js' -NoNewline\")"
     ]
   }
 }
