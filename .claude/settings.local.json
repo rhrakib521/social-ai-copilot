@@ -44,7 +44,16 @@
       "Skill(subagent-driven-development)",
       "Bash(git status *)",
       "Bash(gh pr create --title 'fix: LinkedIn page mention automation with dropdown selection' --body ' *)",
-      "Skill(systematic-debugging)"
+      "Skill(systematic-debugging)",
+      "Bash(xxd \"D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js\")",
+      "Bash(r)",
+      "Bash(powershell -Command \"\\(Get-Content 'D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js' -Raw\\) -replace 'var r = existing\\\\.getBoundingClientRect\\\\\\(\\\\\\);\\\\r?\\\\n\\\\s+if \\\\\\(r\\\\.width > 0 && r\\\\.height > 0\\\\\\) \\\\{\\\\r?\\\\n\\\\s+// Found an open reply field', 'if \\(AutomationEngine.isElVisible\\(existing\\)\\) {`r`n              // Found an open reply field' | Set-Content 'D:\\\\Coding\\\\Social Media Agent\\\\extension\\\\content.js' -NoNewline\")",
+      "Bash(xargs grep -l \"post.*read\\\\|parse.*post\\\\|scrap.*post\\\\|extract.*post\")",
+      "Bash(node -c utils/platform.js)",
+      "Bash(grep -E \"\\\\.\\(js|json|md|html\\)$\")",
+      "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); code=code.replace\\(/^\\\\\\(function\\\\s*\\\\\\(\\\\\\)\\\\s*\\\\{/,'\\(function\\(\\){'\\).replace\\(/\\\\}\\\\\\)\\\\\\(\\\\\\);\\\\s*$/,''\\); try{new Function\\(code\\);console.log\\('content.js: OK'\\)}catch\\(e\\){console.log\\('ERROR:',e.message\\)}\")",
+      "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); console.log\\('Lines:',code.split\\('\\\\n'\\).length\\); console.log\\('Starts:',code.substring\\(0,30\\)\\); console.log\\('Ends:',code.substring\\(code.length-30\\)\\);\")",
+      "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); try{new Function\\(code\\);console.log\\('content.js: OK'\\)}catch\\(e\\){console.log\\('ERROR at ~line:',e.message\\)}\")"
     ]
   }
 }

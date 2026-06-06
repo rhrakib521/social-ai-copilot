@@ -305,9 +305,9 @@ var INSTRUCTION_PRESETS = {
 };
 
 var TASK_INSTRUCTIONS = {
-  reply: 'Write a reply to the post or comment below. 3-4 sentences. Read the original content carefully and respond directly to what was said — do not ignore or skim over the key points.',
-  comment: 'Write a comment on the post below. 3-4 sentences. Read the post content thoroughly, then add a meaningful perspective or real-world example that connects to what the author actually said.',
-  quick_reply: 'Write a short, natural 2-3 line comment on the post. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Make it feel personal and genuine. Do NOT address the author by name.',
+  reply: 'Write a reply to the post or comment below. 3-4 sentences. Read the original content carefully and respond directly to what was said — do not ignore or skim over the key points. Reference something specific from the post to prove you actually read it.',
+  comment: 'Write a comment on the post below. 3-4 sentences. Read the post content thoroughly, then add a meaningful perspective or real-world example that connects to what the author actually said. Pick out a specific detail from the post and react to it.',
+  quick_reply: 'Write a short, natural 2-3 line comment on the post. Read the content carefully first — you MUST reference or react to something specific the author said. Do NOT write a generic compliment. Respond genuinely — like a real person who actually read the post would write. Make it feel personal. Do NOT address the author by name.',
   post: 'Write a new original post based on the topic or draft provided in the context. Make it structured and engaging.',
   rewrite: 'Rewrite and improve the text provided in the context below. Improve clarity without changing the core meaning.',
   hook: 'Write an attention-grabbing hook or opening line for a post on the topic provided. Make it stop-the-scroll worthy.',
@@ -315,8 +315,8 @@ var TASK_INSTRUCTIONS = {
   expand: 'Expand on the ideas in the text provided in the context below. Add more detail and depth.',
   grammar: 'Fix any grammar, spelling, punctuation, or phrasing errors in the text. Return only the corrected version.',
   summarize: 'Summarize the post or text provided in the context below concisely.',
-  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. Read the content carefully first, then respond genuinely — like a real person who actually read the post would write. Do NOT address the author by name. Make it feel personal and genuine.',
-  reddit_auto_comment: 'STEP 1 — CLASSIFY: Read the post. Is it about SaaS, e-commerce, startups, business, marketing, product development, entrepreneurship, tech tools, or business problems/solutions? If clearly personal (memes, hobbies, gossip, politics, personal life), respond with exactly and only the word SKIP.\nSTEP 2 — SAFETY CHECK: Is this post controversial, a heated debate, political, or emotionally charged? If yes, respond with exactly and only the word SKIP.\nSTEP 3 — COMMENT: Write a helpful, genuine comment. Keep it 3-4 lines normally, 6-7 lines when naturally sharing a longer experience. Sound like a real Redditor who genuinely wants to help. Match the subreddit vibe. Offer specific advice, share relevant experience, or ask a thoughtful follow-up. NO marketing language, NO pitches, NO call-to-action. Use simple conversational English, like chatting with a peer. Start naturally — react to what they said, never start with generic praise. Do NOT address the author by name.'
+  auto_classify_comment: 'STEP 1 — CLASSIFY: Read the post below. Is it about business, startups, technology, entrepreneurship, SaaS, AI, marketing, product, fundraising, leadership, career growth, or professional development? If it is clearly personal (personal life events, memes, gossip, hobbies unrelated to work, pet photos, food, travel diaries with no business angle), respond with exactly and only the word SKIP and nothing else.\nSTEP 2 — COMMENT: If the post IS business/startup related, write a short, natural 2-3 line comment. You MUST reference or react to something specific from the post content — not just the topic. Read carefully, then respond genuinely — like a real person who actually read the post would write. Do NOT address the author by name. Make it feel personal and genuine.',
+  reddit_auto_comment: 'STEP 1 — CLASSIFY: Read the post. Is it about SaaS, e-commerce, startups, business, marketing, product development, entrepreneurship, tech tools, or business problems/solutions? If clearly personal (memes, hobbies, gossip, politics, personal life), respond with exactly and only the word SKIP.\nSTEP 2 — SAFETY CHECK: Is this post controversial, a heated debate, political, or emotionally charged? If yes, respond with exactly and only the word SKIP.\nSTEP 3 — COMMENT: Write a helpful, genuine comment. Keep it 3-4 lines normally, 6-7 lines when naturally sharing a longer experience. You MUST reference or react to something specific from the post — pick a detail and respond to it. Sound like a real Redditor who genuinely wants to help. Match the subreddit vibe. Offer specific advice, share relevant experience, or ask a thoughtful follow-up. NO marketing language, NO pitches, NO call-to-action. Use simple conversational English, like chatting with a peer. Start naturally — react to what they said, never start with generic praise. Do NOT address the author by name.'
 };
 
 function buildPrompt(platform, task, tone, context, personality, contextInfo, mentionPages, instructionPresets, customInstructions, mentionMode) {
@@ -388,7 +388,9 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
     '- NO em dashes (—). Use commas or short sentences instead.',
     '- Avoid AI-sounding phrases: "game-changer", "landscape", "delve", "foster", "leverage", "navigate", "realm", "testament", "tapestry", "unleash", "pave the way", "in today\'s world", "it\'s worth noting".',
     '- Avoid generic openings: "Great post!", "Spot on!", "Couldn\'t agree more!", "This!"',
-    '- Keep sentences short. Talk like you\'re chatting with a friend, not writing an essay.'
+    '- Keep sentences short. Talk like you\'re chatting with a friend, not writing an essay.',
+    '- CRITICAL: You MUST reference something specific from the post content in your response. Do NOT write a generic comment that could apply to any post. Pick a detail, a point, a number, or a phrase from the post and react to it directly.',
+    '- If engagement data is provided, use it to calibrate your response tone. High-engagement posts deserve more thoughtful responses.'
   );
 
   // Mention pages instruction — tell AI to naturally include the page name
@@ -420,6 +422,25 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
   if (context.authorProfileUrl) {
     userParts.push('Author profile: ' + context.authorProfileUrl);
   }
+  // Include engagement metrics so the AI can judge post popularity and tailor response
+  var engagementStr = context.engagementStr || '';
+  if (!engagementStr && context.engagement) {
+    // Build engagement string from the engagement object
+    var eParts = [];
+    if (context.engagement.likes) eParts.push(context.engagement.likes + ' likes');
+    if (context.engagement.retweets) eParts.push(context.engagement.retweets + ' retweets');
+    if (context.engagement.comments) eParts.push(context.engagement.comments + ' replies');
+    if (context.engagement.upvotes) eParts.push(context.engagement.upvotes + ' upvotes');
+    if (context.engagement.views) eParts.push(context.engagement.views + ' views');
+    if (context.engagement.reactions) eParts.push(context.engagement.reactions + ' reactions');
+    engagementStr = eParts.join(', ');
+  }
+  if (engagementStr) {
+    userParts.push('Post engagement: ' + engagementStr);
+  }
+  if (context.subreddit) {
+    userParts.push('Subreddit: r/' + context.subreddit);
+  }
   if (context.nearbyComments && context.nearbyComments.length > 0) {
     var commentLines = context.nearbyComments.map(function (c, i) {
       return (i + 1) + '. ' + c;
@@ -434,13 +455,14 @@ function buildPrompt(platform, task, tone, context, personality, contextInfo, me
 
   var maxTokens = 200;
   if (task === 'post' || task === 'expand') maxTokens = 500;
-  if (task === 'quick_reply') maxTokens = 120;
+  if (task === 'quick_reply') maxTokens = 200;
+  if (task === 'reply' || task === 'comment') maxTokens = 300;
   if (task === 'summarize' || task === 'shorten') maxTokens = 150;
   if (task === 'hook') maxTokens = 80;
   if (task === 'grammar') maxTokens = 400;
   if (task === 'rewrite') maxTokens = 300;
-  if (task === 'auto_classify_comment') maxTokens = 150;
-  if (task === 'reddit_auto_comment') maxTokens = 250;
+  if (task === 'auto_classify_comment') maxTokens = 200;
+  if (task === 'reddit_auto_comment') maxTokens = 300;
 
   return {
     messages: [
