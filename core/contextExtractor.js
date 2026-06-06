@@ -42,9 +42,37 @@ function extractText(el, maxLength) {
 }
 
 /**
+ * Extract only the actual post/comment text content from a post element,
+ * stripping out UI chrome (buttons, reaction counts, author headers, etc.).
+ * Falls back to full extractText if no content-specific selectors match.
+ */
+function cleanExtractPostText(postEl, config, maxLength) {
+  maxLength = maxLength || 2000;
+  if (!postEl) return '';
+
+  if (config && config.postContentSelector) {
+    var contentEls = postEl.querySelectorAll(config.postContentSelector);
+    if (contentEls.length > 0) {
+      var textParts = [];
+      for (var i = 0; i < contentEls.length; i++) {
+        var t = (contentEls[i].innerText || contentEls[i].textContent || '').trim();
+        if (t && t.length > 3) textParts.push(t);
+      }
+      if (textParts.length > 0) {
+        var text = textParts.join('\n').trim();
+        if (text.length > maxLength) text = text.substring(0, maxLength) + '...';
+        return text;
+      }
+    }
+  }
+
+  return extractText(postEl, maxLength);
+}
+
+/**
  * Extract context around the currently focused editable field.
  * @param {HTMLElement} activeElement
- * @param {{ editableFields: string[], postContainers: string[], authorSelector: string }} platformConfig
+ * @param {{ editableFields: string[], postContainers: string[], postContentSelector?: string, authorSelector: string }} platformConfig
  * @returns {{ postText: string, author: string, nearbyComments: string[], selectedText: string }}
  */
 export function extractContext(activeElement, platformConfig) {
@@ -67,7 +95,7 @@ export function extractContext(activeElement, platformConfig) {
   var postEl = findNearestAncestor(activeElement, platformConfig.postContainers, 20);
 
   if (postEl) {
-    result.postText = extractText(postEl);
+    result.postText = cleanExtractPostText(postEl, platformConfig);
 
     if (platformConfig.authorSelector) {
       var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
@@ -122,7 +150,7 @@ export function pickPost(platformConfig, index) {
   if (index < 0 || index >= allPosts.length) return result;
 
   var postEl = allPosts[index];
-  result.postText = extractText(postEl);
+  result.postText = cleanExtractPostText(postEl, platformConfig);
 
   if (platformConfig.authorSelector) {
     var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);

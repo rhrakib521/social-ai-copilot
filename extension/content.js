@@ -325,9 +325,13 @@
       ],
       postContainers: [
         '.feed-shared-update-v2',
+        '.feed-shared-celebration-v2',
         '.comments-comments-list__comment-item',
         '.msg-s-message-listevent'
       ],
+      // Selectors that target ONLY the actual post/comment text content area,
+      // excluding UI chrome (buttons, reaction counts, author headers, etc.)
+      postContentSelector: '.update-components-text .break-words, .update-components-text, .attributed-text-segment-list__content, .feed-shared-inline-show-more-text, .feed-shared-update-v2__description .break-words',
       authorSelector: '.update-components-actor__title span[dir="ltr"], .comments-post-meta__actor span[dir="ltr"]',
       personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.',
       postSelector: '.feed-shared-update-v2, .feed-shared-celebration-v2',
@@ -376,6 +380,9 @@
         'article[data-testid="tweet"]',
         '[data-testid="tweet"] article'
       ],
+      // Selectors that target ONLY the actual tweet text, excluding action buttons,
+      // timestamps, author headers, retweet labels, and engagement counts.
+      postContentSelector: '[data-testid="tweetText"], .tweet-text, [lang] [dir="auto"]',
       authorSelector: '[data-testid="User-Name"] a span',
       personality: 'You are writing for X (Twitter). Be concise, punchy, and impactful. Respect the character-limited culture even when writing longer posts.',
       postSelector: 'article[data-testid="tweet"]',
@@ -597,8 +604,122 @@
     return text;
   }
 
+  /**
+   * Extract only the actual post/comment text content from a post element,
+   * stripping out UI chrome (buttons, reaction counts, author headers, etc.).
+   * Falls back to full extractText if no content-specific selectors match.
+   */
+  function cleanExtractPostText(postEl, config, maxLength) {
+    maxLength = maxLength || 2000;
+    if (!postEl) return '';
+
+    // If the platform defines content-specific selectors, use those to get
+    // ONLY the actual text, not the entire post container with all UI noise.
+    if (config && config.postContentSelector) {
+      var contentEls = postEl.querySelectorAll(config.postContentSelector);
+      if (contentEls.length > 0) {
+        var textParts = [];
+        for (var i = 0; i < contentEls.length; i++) {
+          var t = (contentEls[i].innerText || contentEls[i].textContent || '').trim();
+          if (t && t.length > 3) textParts.push(t);
+        }
+        if (textParts.length > 0) {
+          var text = textParts.join('\n').trim();
+          if (text.length > maxLength) text = text.substring(0, maxLength) + '...';
+          return text;
+        }
+      }
+    }
+
+    // Fallback: use full element extraction (includes UI noise)
+    return extractText(postEl, maxLength);
+  }
+
+  /**
+   * Extract engagement metrics from a post element.
+   * Returns { likes, retweets/reposts, comments, upvotes, views } as applicable.
+   */
+  function extractEngagement(postEl) {
+    if (!postEl) return null;
+    var eng = { likes: 0, retweets: 0, comments: 0, upvotes: 0, views: 0 };
+    if (platformName === 'x') {
+      // X: like button, retweet button, reply button, view count
+      var likeBtn = postEl.querySelector('[data-testid="like"], [data-testid="unlike"]');
+      if (likeBtn) {
+        var likeLabel = likeBtn.getAttribute('aria-label') || '';
+        var lm = likeLabel.match(/([\d,.]+\s*[KMB]?)/i);
+        if (lm) eng.likes = parseCount(lm[1]);
+      }
+      var rtBtn = postEl.querySelector('[data-testid="retweet"], [data-testid="unretweet"]');
+      if (rtBtn) {
+        var rtLabel = rtBtn.getAttribute('aria-label') || '';
+        var rtm = rtLabel.match(/([\d,.]+\s*[KMB]?)/i);
+        if (rtm) eng.retweets = parseCount(rtm[1]);
+      }
+      var replyBtn = postEl.querySelector('[data-testid="reply"]');
+      if (replyBtn) {
+        var replyLabel = replyBtn.getAttribute('aria-label') || '';
+        var rm = replyLabel.match(/([\d,.]+\s*[KMB]?)/i);
+        if (rm) eng.comments = parseCount(rm[1]);
+      }
+      // View count — appears as a separate element near the action bar
+      var viewEl = postEl.querySelector('a[href*="/analytics"], [role="link"] span[data-testid="views"]');
+      if (viewEl) {
+        var vt = (viewEl.textContent || '').trim();
+        var vm = vt.match(/([\d,.]+\s*[KMB]?)/i);
+        if (vm) eng.views = parseCount(vm[1]);
+      }
+    } else if (platformName === 'linkedin') {
+      var rEl = postEl.querySelector(platformConfig.reactionCountSelector);
+      if (rEl) eng.likes = extractCountFromEl(rEl);
+      var cEl = postEl.querySelector(platformConfig.commentCountSelector);
+      if (cEl) eng.comments = extractCountFromEl(cEl);
+    } else if (platformName === 'facebook') {
+      var rEl2 = postEl.querySelector(platformConfig.reactionCountSelector);
+      if (rEl2) eng.likes = extractCountFromEl(rEl2);
+      var cEl2 = postEl.querySelector(platformConfig.commentCountSelector);
+      if (cEl2) eng.comments = extractCountFromEl(cEl2);
+    } else if (platformName === 'reddit') {
+      var shTag = postEl.tagName ? postEl.tagName.toLowerCase() : '';
+      if (shTag === 'shreddit-post') {
+        eng.upvotes = parseInt(postEl.getAttribute('score')) || 0;
+        eng.comments = parseInt(postEl.getAttribute('comment-count')) || 0;
+      }
+      if (eng.upvotes === 0 && platformConfig.scoreSelector) {
+        var sEl = postEl.querySelector(platformConfig.scoreSelector);
+        if (sEl) eng.upvotes = extractCountFromEl(sEl);
+      }
+      if (eng.comments === 0 && platformConfig.commentLinkSelector) {
+        var clEl = postEl.querySelector(platformConfig.commentLinkSelector);
+        if (clEl) eng.comments = extractCountFromEl(clEl);
+      }
+    }
+    return eng;
+  }
+
+  /**
+   * Format engagement into a human-readable string for the AI prompt.
+   */
+  function formatEngagement(eng) {
+    if (!eng) return '';
+    var parts = [];
+    if (platformName === 'x') {
+      if (eng.likes) parts.push(eng.likes + ' likes');
+      if (eng.retweets) parts.push(eng.retweets + ' retweets');
+      if (eng.comments) parts.push(eng.comments + ' replies');
+      if (eng.views) parts.push(eng.views + ' views');
+    } else if (platformName === 'reddit') {
+      if (eng.upvotes) parts.push(eng.upvotes + ' upvotes');
+      if (eng.comments) parts.push(eng.comments + ' comments');
+    } else {
+      if (eng.likes) parts.push(eng.likes + ' reactions');
+      if (eng.comments) parts.push(eng.comments + ' comments');
+    }
+    return parts.length > 0 ? parts.join(', ') : '';
+  }
+
   function extractContext(activeEl) {
-    var result = { postText: '', author: '', nearbyComments: [], selectedText: '' };
+    var result = { postText: '', author: '', nearbyComments: [], selectedText: '', engagement: null };
     if (!activeEl || !platformConfig) return result;
 
     result.selectedText = getSelectedText();
@@ -639,8 +760,49 @@
       }
     }
 
+    // LinkedIn/Facebook fallback: if no ancestor found, find nearest post by visual position
+    if (!postEl && (platformName === 'linkedin' || platformName === 'facebook')) {
+      var liFieldRect = activeEl.getBoundingClientRect();
+      var liPostSelector = platformConfig.postSelector || platformConfig.postContainers[0];
+      var liAllPosts = document.querySelectorAll(liPostSelector);
+      var liBestPost = null, liBestDist = Infinity;
+      for (var liPi = 0; liPi < liAllPosts.length; liPi++) {
+        var liPr = liAllPosts[liPi].getBoundingClientRect();
+        if (liPr.height === 0) continue;
+        // Post should be above the comment field
+        var liDy = liFieldRect.top - liPr.top;
+        if (liDy < 0) continue; // skip posts below the field
+        var liDist = liDy + Math.abs(liFieldRect.left - liPr.left) * 0.3;
+        if (liDist < liBestDist) { liBestDist = liDist; liBestPost = liAllPosts[liPi]; }
+      }
+      if (liBestPost) {
+        postEl = liBestPost;
+        console.log('[SAIC] extractContext: found post by visual proximity (fallback)');
+      }
+    }
+
+    // X fallback: if no ancestor found, find nearest tweet by visual position
+    if (!postEl && platformName === 'x') {
+      var xFieldRect = activeEl.getBoundingClientRect();
+      var xAllPosts = document.querySelectorAll(platformConfig.postSelector || 'article[data-testid="tweet"]');
+      var xBestPost = null, xBestDist = Infinity;
+      for (var xPi = 0; xPi < xAllPosts.length; xPi++) {
+        var xPr = xAllPosts[xPi].getBoundingClientRect();
+        if (xPr.height === 0) continue;
+        // Tweet should be above the reply field
+        var xDy = xFieldRect.top - xPr.top;
+        if (xDy < 0) continue;
+        var xDist = xDy + Math.abs(xFieldRect.left - xPr.left) * 0.3;
+        if (xDist < xBestDist) { xBestDist = xDist; xBestPost = xAllPosts[xPi]; }
+      }
+      if (xBestPost) {
+        postEl = xBestPost;
+        console.log('[SAIC] extractContext: found tweet by visual proximity (fallback)');
+      }
+    }
+
     if (postEl) {
-      result.postText = extractText(postEl);
+      result.postText = cleanExtractPostText(postEl, platformConfig);
       if (platformConfig.authorSelector) {
         var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
         if (authorEls.length > 0) {
@@ -652,6 +814,13 @@
         var authorAttr = postEl.getAttribute('author');
         if (authorAttr) result.author = authorAttr;
       }
+      // Extract engagement metrics
+      result.engagement = extractEngagement(postEl);
+      // Get full author info (handle, profile URL) for the AI
+      var fullAuthorInfo = getAuthorInfo(postEl, platformName);
+      if (fullAuthorInfo.handle) result.authorHandle = fullAuthorInfo.handle;
+      if (fullAuthorInfo.profileUrl) result.authorProfileUrl = fullAuthorInfo.profileUrl;
+
       var siblings = postEl.parentElement ? postEl.parentElement.children : [];
       var comments = [];
       for (var i = 0; i < siblings.length && comments.length < 5; i++) {
@@ -2040,7 +2209,7 @@
     },
 
     extractPostContext: function (postEl) {
-      var text = extractText(postEl, 2000);
+      var text = cleanExtractPostText(postEl, platformConfig, 2000);
       var author = '';
       var authorInfo = getAuthorInfo(postEl, platformName);
       if (authorInfo.name) {
@@ -2052,6 +2221,9 @@
         var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
         if (authorEls.length > 0) author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
       }
+      // Extract engagement metrics for the AI to use
+      var engagement = extractEngagement(postEl);
+      var engagementStr = formatEngagement(engagement);
       var siblings = postEl.parentElement ? postEl.parentElement.children : [];
       var comments = [];
       for (var i = 0; i < siblings.length && comments.length < 5; i++) {
@@ -2065,7 +2237,7 @@
           }
         }
       }
-      return { postText: text, author: author, authorHandle: authorInfo.handle, authorProfileUrl: authorInfo.profileUrl, nearbyComments: comments, selectedText: '' };
+      return { postText: text, author: author, authorHandle: authorInfo.handle, authorProfileUrl: authorInfo.profileUrl, nearbyComments: comments, selectedText: '', engagement: engagement, engagementStr: engagementStr };
     },
 
     // Dismiss any previously open comment editors to avoid typing into the wrong box
@@ -3681,12 +3853,16 @@
 
     // Extract context from a tweet on the detail page (includes visible replies)
     extractDetailContext: function (tweetEl) {
-      var text = extractText(tweetEl, 2000);
+      var text = cleanExtractPostText(tweetEl, platformConfig, 2000);
       var authorInfo = getAuthorInfo(tweetEl, 'x');
       var author = authorInfo.name || '';
       if (authorInfo.handle && authorInfo.handle !== authorInfo.name) {
         author += ' (@' + authorInfo.handle + ')';
       }
+
+      // Extract engagement metrics from the detail page tweet
+      var engagement = extractEngagement(tweetEl);
+      var engagementStr = formatEngagement(engagement);
 
       // Collect visible replies (other tweet articles on the page)
       var replies = [];
@@ -3707,7 +3883,9 @@
         authorHandle: authorInfo.handle,
         authorProfileUrl: authorInfo.profileUrl,
         nearbyComments: replies,
-        selectedText: ''
+        selectedText: '',
+        engagement: engagement,
+        engagementStr: engagementStr
       };
     },
 

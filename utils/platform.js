@@ -14,9 +14,13 @@ const PLATFORMS = {
     ],
     postContainers: [
       '.feed-shared-update-v2',
+      '.feed-shared-celebration-v2',
       '.comments-comments-list__comment-item',
       '.msg-s-message-listevent'
     ],
+    // Selectors that target ONLY the actual post/comment text content area,
+    // excluding UI chrome (buttons, reaction counts, author headers, etc.)
+    postContentSelector: '.update-components-text .break-words, .update-components-text, .attributed-text-segment-list__content, .feed-shared-inline-show-more-text, .feed-shared-update-v2__description .break-words',
     authorSelector: '.update-components-actor__title span[dir="ltr"], .comments-post-meta__actor span[dir="ltr"]',
     personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.'
   },
@@ -48,6 +52,7 @@ const PLATFORMS = {
       '[data-testid="tweet"]',
       'article[data-testid="tweet"]'
     ],
+    postContentSelector: '[data-testid="tweetText"], .tweet-text, [lang] [dir="auto"]',
     authorSelector: '[data-testid="User-Name"] a span',
     personality: 'You are writing for X (Twitter). Be concise, punchy, and impactful. Respect the character-limited culture even when writing longer posts.'
   },
@@ -98,6 +103,7 @@ export function getFieldSelectors(platform) {
   return {
     editableFields: config.editableFields,
     postContainers: config.postContainers,
+    postContentSelector: config.postContentSelector || null,
     authorSelector: config.authorSelector,
     personality: config.personality
   };
