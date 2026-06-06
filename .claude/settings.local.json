@@ -53,7 +53,9 @@
       "Bash(grep -E \"\\\\.\\(js|json|md|html\\)$\")",
       "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); code=code.replace\\(/^\\\\\\(function\\\\s*\\\\\\(\\\\\\)\\\\s*\\\\{/,'\\(function\\(\\){'\\).replace\\(/\\\\}\\\\\\)\\\\\\(\\\\\\);\\\\s*$/,''\\); try{new Function\\(code\\);console.log\\('content.js: OK'\\)}catch\\(e\\){console.log\\('ERROR:',e.message\\)}\")",
       "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); console.log\\('Lines:',code.split\\('\\\\n'\\).length\\); console.log\\('Starts:',code.substring\\(0,30\\)\\); console.log\\('Ends:',code.substring\\(code.length-30\\)\\);\")",
-      "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); try{new Function\\(code\\);console.log\\('content.js: OK'\\)}catch\\(e\\){console.log\\('ERROR at ~line:',e.message\\)}\")"
+      "Bash(node -e \"var code=require\\('fs'\\).readFileSync\\('extension/content.js','utf8'\\); try{new Function\\(code\\);console.log\\('content.js: OK'\\)}catch\\(e\\){console.log\\('ERROR at ~line:',e.message\\)}\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const code=fs.readFileSync\\('utils/platform.js','utf8'\\);const stripped=code.replace\\(/export\\\\s/g,'module.'\\);try{new Function\\(stripped\\);console.log\\('platform.js: syntax OK'\\)}catch\\(e\\){console.log\\('platform.js ERROR:',e.message\\)}\")",
+      "Bash(node --input-type=module -e \"import { fileURLToPath } from 'url'; import { createRequire } from 'module'; const fs = await import\\('fs'\\); const code = fs.default.readFileSync\\('utils/platform.js','utf8'\\); console.log\\('platform.js loaded OK, length:', code.length\\)\")"
     ]
   }
 }

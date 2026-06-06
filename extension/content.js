@@ -109,6 +109,11 @@
       var link = postEl.querySelector('a[href*="/posts/"], a[href*="/feed/update/"], a[href*="/activity/"], a[href*="urn:li:activity"]');
       if (link) href = link.getAttribute('href') || '';
       if (!href) {
+        // Also try shared-update link pattern
+        var sharedLink = postEl.querySelector('a[href*="linkedin.com/posts/"], a[href*="linkedin.com/feed/update/"]');
+        if (sharedLink) href = sharedLink.getAttribute('href') || '';
+      }
+      if (!href) {
         var timeEl = postEl.querySelector('time');
         if (timeEl) {
           // Time element may be wrapped in an anchor
@@ -124,6 +129,11 @@
       if (!href) {
         var activityUrn = postEl.getAttribute('data-urn') || postEl.getAttribute('data-activity-urn') || '';
         if (activityUrn) href = '/feed/update/' + activityUrn;
+      }
+      // Try finding any link with activity/ugcPost in href within the post header area
+      if (!href) {
+        var headerLink = postEl.querySelector('.update-components-actor a[href*="/in/"] ~ a, .feed-shared-actor a[href]');
+        if (headerLink) href = headerLink.getAttribute('href') || '';
       }
     } else if (platform === 'facebook') {
       var link2 = postEl.querySelector('a[href*="/posts/"], a[href*="/permalink"], a[href*="story_fbid"], a[href*="/videos/"]');
@@ -182,9 +192,32 @@
     var info = { name: '', handle: '', profileUrl: '' };
     if (!postEl || !platform) return info;
     if (platform === 'linkedin') {
-      var authorEl = postEl.querySelector('.update-components-actor__title span[dir="ltr"], .update-components-actor__name, span[class*="actor__title"]');
+      var authorEl = postEl.querySelector(
+        '.update-components-actor__title span[dir="ltr"], ' +
+        '.update-components-actor__name, ' +
+        'span[class*="actor__title"], ' +
+        '.feed-shared-actor__title, ' +
+        '.feed-shared-actor__name, ' +
+        '.update-components-actor__title .visually-hidden, ' +
+        '[data-control-name="actor"] span[dir="ltr"]'
+      );
       if (authorEl) info.name = (authorEl.innerText || authorEl.textContent || '').trim();
-      var profileEl = postEl.querySelector('.update-components-actor__image a, .update-components-actor__title a, a[class*="actor"][href*="/in/"]');
+      // If still no name, try broader patterns
+      if (!info.name) {
+        var fallbackAuthor = postEl.querySelector(
+          '.update-components-actor span[dir="ltr"], ' +
+          '[data-control-name="actor"] .visually-hidden'
+        );
+        if (fallbackAuthor) info.name = (fallbackAuthor.innerText || fallbackAuthor.textContent || '').trim();
+      }
+      var profileEl = postEl.querySelector(
+        '.update-components-actor__image a, ' +
+        '.update-components-actor__title a, ' +
+        'a[class*="actor"][href*="/in/"], ' +
+        '[data-control-name="actor"] a[href*="/in/"], ' +
+        '.feed-shared-actor__image a, ' +
+        '.feed-shared-actor a[href*="/in/"]'
+      );
       if (profileEl) info.profileUrl = profileEl.getAttribute('href') || '';
       if (info.profileUrl && info.profileUrl.charAt(0) === '/') info.profileUrl = window.location.origin + info.profileUrl;
     } else if (platform === 'facebook') {
@@ -321,26 +354,77 @@
         '[aria-label*="Post"]',
         '[aria-label*="comment"]',
         '[aria-label*="message"]',
-        '.editor-content [contenteditable="true"]'
+        '.editor-content [contenteditable="true"]',
+        // Newer LinkedIn editor patterns
+        '.share-box [contenteditable="true"]',
+        '.create-post [contenteditable="true"]',
+        '[contenteditable="true"][aria-label*="Write"]'
       ],
       postContainers: [
+        // Primary post wrappers (old + new patterns)
         '.feed-shared-update-v2',
         '.feed-shared-celebration-v2',
+        '.occludable-update',
+        // Attribute-based selectors — more resilient to class renames
+        '[data-urn*="urn:li:activity"]',
+        '[data-urn*="urn:li:ugcPost"]',
+        '[data-urn*="urn:li:share"]',
+        // Comment containers
         '.comments-comments-list__comment-item',
-        '.msg-s-message-listevent'
+        '.comments-comment-item',
+        // Messaging
+        '.msg-s-message-listevent',
+        // Generic fallback: any main feed update container
+        '.feed-shared-update',
+        '[data-id*="urn:li:activity"]'
       ],
-      // Selectors that target ONLY the actual post/comment text content area,
-      // excluding UI chrome (buttons, reaction counts, author headers, etc.)
-      postContentSelector: '.update-components-text .break-words, .update-components-text, .attributed-text-segment-list__content, .feed-shared-inline-show-more-text, .feed-shared-update-v2__description .break-words',
-      authorSelector: '.update-components-actor__title span[dir="ltr"], .comments-post-meta__actor span[dir="ltr"]',
+      // Selectors that target ONLY the actual post/comment text content area.
+      // Ordered from most-specific to least-specific; the engine tries them in order.
+      // Updated June 2026 to cover the new text-view-model-migration patterns.
+      postContentSelector: [
+        // New 2026 text view model patterns
+        '.update-components-text .break-words',
+        '.update-components-text',
+        '.attributed-text-segment-list__content',
+        '.feed-shared-inline-show-more-text',
+        '.feed-shared-update-v2__description .break-words',
+        // Newer LinkedIn text containers (text-view-model-migration)
+        '.text-view-model',
+        '.text-view-model .break-words',
+        '[data-test-id="share-text"]',
+        '[data-test-id="main-feed-activity-card__comment-text"]',
+        // Generic attributed text patterns
+        '.attributed-text-segment-list__content .break-words',
+        // Broader fallbacks — these may match UI chrome so only used when specific fail
+        '.feed-shared-text',
+        '.feed-shared-update-v2__commentary',
+        // Comment text patterns
+        '.comments-comment-item__comment-text',
+        '.comments-comment-text',
+        '.commenting-stub-comment__text-content'
+      ].join(', '),
+      authorSelector: [
+        '.update-components-actor__title span[dir="ltr"]',
+        '.update-components-actor__name',
+        '.comments-post-meta__actor span[dir="ltr"]',
+        // Newer author patterns
+        '.update-components-actor__title',
+        '.update-components-actor .visually-hidden',
+        '.feed-shared-actor__title',
+        '.feed-shared-actor__name',
+        // Broader fallback
+        '.update-components-actor span[dir="ltr"]',
+        '[data-control-name="actor"] span[dir="ltr"]',
+        '[data-control-name="actor"] .visually-hidden'
+      ].join(', '),
       personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.',
-      postSelector: '.feed-shared-update-v2, .feed-shared-celebration-v2',
-      commentButtonSelector: 'button[aria-label*="Comment"], button[aria-label*="comment"]',
+      postSelector: '.feed-shared-update-v2, .feed-shared-celebration-v2, .occludable-update, [data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]',
+      commentButtonSelector: 'button[aria-label*="Comment"], button[aria-label*="comment"], button[data-control-name="comment.toggle"]',
       replyFieldSelector: '.ql-editor[contenteditable="true"]',
-      submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button',
-      reactionCountSelector: '.social-details-social-counts__reactions-count, button[aria-label*="react" i] span, span.social-details-social-counts__reactions-count',
-      commentCountSelector: '.social-details-social-counts__comments, button[aria-label*="comment" i] span',
-      authorLinkSelector: '.update-components-actor__image a, .update-components-actor__title a'
+      submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button, button[data-control-name="reply.submit"]',
+      reactionCountSelector: '.social-details-social-counts__reactions-count, button[aria-label*="react" i] span, span.social-details-social-counts__reactions-count, [data-test-id="social-counts-reactions"], .social-counts-reactions',
+      commentCountSelector: '.social-details-social-counts__comments, button[aria-label*="comment" i] span, [data-test-id="social-counts-comments"]',
+      authorLinkSelector: '.update-components-actor__image a, .update-components-actor__title a, [data-control-name="actor"] a, .feed-shared-actor__image a'
     },
     facebook: {
       editableFields: [
@@ -574,6 +658,13 @@
       for (var i = 0; i < selectors.length; i++) {
         if (current.matches && current.matches(selectors[i])) return current;
       }
+      // LinkedIn fallback: elements with data-urn containing activity/ugcPost are post containers
+      if (platformName === 'linkedin' && current.hasAttribute && current.hasAttribute('data-urn')) {
+        var urn = current.getAttribute('data-urn') || '';
+        if (urn.indexOf('urn:li:activity') !== -1 || urn.indexOf('urn:li:ugcPost') !== -1 || urn.indexOf('urn:li:share') !== -1) {
+          return current;
+        }
+      }
       current = current.parentElement;
       depth++;
     }
@@ -609,6 +700,126 @@
    * stripping out UI chrome (buttons, reaction counts, author headers, etc.).
    * Falls back to full extractText if no content-specific selectors match.
    */
+  /**
+   * LinkedIn-specific heuristic text extraction.
+   * When all known CSS selectors fail (because LinkedIn renamed classes),
+   * this walks the post DOM structure to find the main text content block
+   * by analysing element size, position, and content characteristics.
+   */
+  function linkedinHeuristicTextExtract(postEl, maxLength) {
+    if (!postEl) return '';
+    maxLength = maxLength || 2000;
+
+    // Strategy 1: Look for the largest text-bearing <p> or <span> block inside the post.
+    // LinkedIn posts typically have a dedicated content div with paragraphs.
+    var candidates = postEl.querySelectorAll('p, span[dir="ltr"], div[dir="ltr"]');
+    var best = null;
+    var bestLen = 0;
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var cEl = candidates[ci];
+      // Skip elements that look like UI chrome (buttons, headers, social bar)
+      var parentClasses = (cEl.parentElement && cEl.parentElement.className) || '';
+      var selfClasses = cEl.className || '';
+      var combined = (parentClasses + ' ' + selfClasses).toLowerCase();
+      if (combined.indexOf('actor') !== -1) continue;     // author header
+      if (combined.indexOf('social-counts') !== -1) continue;  // engagement bar
+      if (combined.indexOf('comment-button') !== -1) continue;
+      if (combined.indexOf('reaction') !== -1 && combined.indexOf('text') === -1) continue;
+      if (combined.indexOf('footer') !== -1) continue;
+      if (combined.indexOf('actions-bar') !== -1) continue;
+      if (combined.indexOf('control') !== -1 && combined.indexOf('text') === -1) continue;
+      // Skip very short bits (names, timestamps, labels)
+      var cText = (cEl.innerText || '').trim();
+      if (cText.length < 15) continue;
+      if (cText.length > bestLen) {
+        bestLen = cText.length;
+        best = cEl;
+      }
+    }
+    if (best && bestLen > 15) {
+      var txt = (best.innerText || '').trim();
+      if (txt.length > maxLength) txt = txt.substring(0, maxLength) + '...';
+      return txt;
+    }
+
+    // Strategy 2: Walk children looking for text-heavy divs.
+    // The post content div is usually one of the first children of the main update container
+    // and has a high text-to-children ratio.
+    var children = postEl.children;
+    for (var chi = 0; chi < children.length && chi < 8; chi++) {
+      var child = children[chi];
+      var childText = (child.innerText || '').trim();
+      // If a child has substantial text and isn't the actor/social bar
+      if (childText.length > 30) {
+        var cCls = (child.className || '').toLowerCase();
+        if (cCls.indexOf('actor') !== -1) continue;
+        if (cCls.indexOf('social') !== -1 && cCls.indexOf('text') === -1) continue;
+        if (cCls.indexOf('update-components-actor') !== -1) continue;
+        // Found a promising block — extract only text nodes, not buttons
+        var innerParts = [];
+        var walker = document.createTreeWalker(child, NodeFilter.SHOW_TEXT, null, false);
+        while (walker.nextNode()) {
+          var nodeVal = (walker.currentNode.textContent || '').trim();
+          if (nodeVal && nodeVal.length > 2) innerParts.push(nodeVal);
+        }
+        if (innerParts.length > 0) {
+          var result = innerParts.join(' ').replace(/\s+/g, ' ').trim();
+          if (result.length > maxLength) result = result.substring(0, maxLength) + '...';
+          return result;
+        }
+      }
+    }
+
+    return '';
+  }
+
+  /**
+   * DOM diagnostic logger — logs what selectors matched vs failed on LinkedIn.
+   * Only runs on LinkedIn pages. Helps debug selector breakage without guessing.
+   */
+  function logLinkedInDiagnostic(postEl) {
+    if (!postEl) return;
+    var diag = { postContainerFound: true };
+
+    // Check post container class
+    diag.postClasses = (postEl.className || '').substring(0, 200);
+    diag.postDataUrn = postEl.getAttribute('data-urn') || 'none';
+    diag.postTag = postEl.tagName || '?';
+
+    // Check content selectors
+    var contentSelectors = platformConfig && platformConfig.postContentSelector
+      ? platformConfig.postContentSelector.split(',').map(function(s) { return s.trim(); })
+      : [];
+    diag.contentSelectorResults = {};
+    for (var i = 0; i < contentSelectors.length; i++) {
+      var sel = contentSelectors[i];
+      try {
+        var matches = postEl.querySelectorAll(sel);
+        diag.contentSelectorResults[sel] = matches.length;
+      } catch (e) {
+        diag.contentSelectorResults[sel] = 'error: ' + e.message;
+      }
+    }
+
+    // Check author selectors
+    if (platformConfig && platformConfig.authorSelector) {
+      var authorSels = platformConfig.authorSelector.split(',').map(function(s) { return s.trim(); });
+      diag.authorSelectorResults = {};
+      for (var j = 0; j < authorSels.length; j++) {
+        try {
+          diag.authorSelectorResults[authorSels[j]] = postEl.querySelectorAll(authorSels[j]).length;
+        } catch (e2) {
+          diag.authorSelectorResults[authorSels[j]] = 'error';
+        }
+      }
+    }
+
+    // Check heuristic result
+    diag.heuristicText = linkedinHeuristicTextExtract(postEl, 100);
+
+    console.log('[SAIC] LinkedIn DOM diagnostic:', JSON.stringify(diag, null, 2));
+  }
+
   function cleanExtractPostText(postEl, config, maxLength) {
     maxLength = maxLength || 2000;
     if (!postEl) return '';
@@ -629,6 +840,21 @@
           return text;
         }
       }
+    }
+
+    // LinkedIn-specific heuristic fallback: when LinkedIn changes CSS class names,
+    // walk the DOM structure to find the text content intelligently.
+    if (platformName === 'linkedin') {
+      var heuristicText = linkedinHeuristicTextExtract(postEl, maxLength);
+      if (heuristicText && heuristicText.length > 10) {
+        console.log('[SAIC] LinkedIn: selectors missed, used heuristic extraction (' + heuristicText.length + ' chars)');
+        // Log diagnostic so we can update selectors
+        logLinkedInDiagnostic(postEl);
+        return heuristicText;
+      }
+      // Even heuristic failed — log diagnostic for debugging
+      console.log('[SAIC] LinkedIn: ALL extraction methods failed for post element');
+      logLinkedInDiagnostic(postEl);
     }
 
     // Fallback: use full element extraction (includes UI noise)
@@ -672,8 +898,26 @@
     } else if (platformName === 'linkedin') {
       var rEl = postEl.querySelector(platformConfig.reactionCountSelector);
       if (rEl) eng.likes = extractCountFromEl(rEl);
+      // Fallback: look for aria-label containing reaction/like count
+      if (eng.likes === 0) {
+        var reactBtn = postEl.querySelector('button[aria-label*="react" i], button[aria-label*="like" i], [data-test-id*="reaction"]');
+        if (reactBtn) {
+          var rLabel = reactBtn.getAttribute('aria-label') || '';
+          var rMatch = rLabel.match(/([\d,.]+\s*[KMB]?)/i);
+          if (rMatch) eng.likes = parseCount(rMatch[1]);
+        }
+      }
       var cEl = postEl.querySelector(platformConfig.commentCountSelector);
       if (cEl) eng.comments = extractCountFromEl(cEl);
+      // Fallback: look for aria-label containing comment count
+      if (eng.comments === 0) {
+        var cBtn = postEl.querySelector('button[aria-label*="comment" i], [data-test-id*="comment"]');
+        if (cBtn) {
+          var cLabel = cBtn.getAttribute('aria-label') || '';
+          var cMatch = cLabel.match(/([\d,.]+\s*[KMB]?)/i);
+          if (cMatch) eng.comments = parseCount(cMatch[1]);
+        }
+      }
     } else if (platformName === 'facebook') {
       var rEl2 = postEl.querySelector(platformConfig.reactionCountSelector);
       if (rEl2) eng.likes = extractCountFromEl(rEl2);
@@ -765,6 +1009,18 @@
       var liFieldRect = activeEl.getBoundingClientRect();
       var liPostSelector = platformConfig.postSelector || platformConfig.postContainers[0];
       var liAllPosts = document.querySelectorAll(liPostSelector);
+      // LinkedIn extra: also query by data-urn attribute for resilient post detection
+      if (platformName === 'linkedin') {
+        var urnPosts = document.querySelectorAll('[data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]');
+        // Merge urn-based posts (deduplicate by element)
+        var seen = new Set();
+        for (var up = 0; up < liAllPosts.length; up++) seen.add(liAllPosts[up]);
+        for (var uu = 0; uu < urnPosts.length; uu++) {
+          if (!seen.has(urnPosts[uu])) {
+            liAllPosts = Array.prototype.slice.call(liAllPosts).concat([urnPosts[uu]]);
+          }
+        }
+      }
       var liBestPost = null, liBestDist = Infinity;
       for (var liPi = 0; liPi < liAllPosts.length; liPi++) {
         var liPr = liAllPosts[liPi].getBoundingClientRect();
