@@ -7,21 +7,34 @@ const PLATFORMS = {
       '.ql-editor[contenteditable="true"]',
       '.msg-form__contenteditable[contenteditable="true"]',
       '.comments-comment-texteditor[contenteditable="true"]',
+      '.comments-comment-box [contenteditable="true"]',
+      '[role="textbox"][contenteditable="true"]',
       '[data-placeholder*="post"]',
       '[aria-label*="Post"]',
       '[aria-label*="comment"]',
-      '[aria-label*="message"]'
+      '[aria-label*="message"]',
+      '.editor-content [contenteditable="true"]',
+      '.share-box [contenteditable="true"]',
+      '.create-post [contenteditable="true"]',
+      '[contenteditable="true"][aria-label*="Write"]'
     ],
     postContainers: [
       '.feed-shared-update-v2',
       '.feed-shared-celebration-v2',
+      '.occludable-update',
+      '[data-urn*="urn:li:activity"]',
+      '[data-urn*="urn:li:ugcPost"]',
+      '[data-urn*="urn:li:share"]',
       '.comments-comments-list__comment-item',
-      '.msg-s-message-listevent'
+      '.comments-comment-item',
+      '.msg-s-message-listevent',
+      '.feed-shared-update',
+      '[data-id*="urn:li:activity"]'
     ],
-    // Selectors that target ONLY the actual post/comment text content area,
-    // excluding UI chrome (buttons, reaction counts, author headers, etc.)
-    postContentSelector: '.update-components-text .break-words, .update-components-text, .attributed-text-segment-list__content, .feed-shared-inline-show-more-text, .feed-shared-update-v2__description .break-words',
-    authorSelector: '.update-components-actor__title span[dir="ltr"], .comments-post-meta__actor span[dir="ltr"]',
+    // Selectors that target ONLY the actual post/comment text content area.
+    // Updated June 2026 to cover the new text-view-model-migration patterns.
+    postContentSelector: '.update-components-text .break-words, .update-components-text, .attributed-text-segment-list__content, .feed-shared-inline-show-more-text, .feed-shared-update-v2__description .break-words, .text-view-model, .text-view-model .break-words, [data-test-id="share-text"], .attributed-text-segment-list__content .break-words, .feed-shared-text, .feed-shared-update-v2__commentary, .comments-comment-item__comment-text, .comments-comment-text',
+    authorSelector: '.update-components-actor__title span[dir="ltr"], .update-components-actor__name, .comments-post-meta__actor span[dir="ltr"], .update-components-actor__title, .feed-shared-actor__title, .feed-shared-actor__name, .update-components-actor span[dir="ltr"], [data-control-name="actor"] span[dir="ltr"]',
     personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.'
   },
 
