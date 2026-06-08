@@ -35,10 +35,7 @@ function extractText(el, maxLength) {
   maxLength = maxLength || 2000;
   if (!el) return '';
   var text = (el.innerText || el.textContent || '').trim();
-  if (text.length > maxLength) {
-    text = text.substring(0, maxLength) + '...';
-  }
-  return text;
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 }
 
 /**
@@ -56,12 +53,11 @@ function cleanExtractPostText(postEl, config, maxLength) {
       var textParts = [];
       for (var i = 0; i < contentEls.length; i++) {
         var t = (contentEls[i].innerText || contentEls[i].textContent || '').trim();
-        if (t && t.length > 3) textParts.push(t);
+        if (t.length > 3) textParts.push(t);
       }
       if (textParts.length > 0) {
         var text = textParts.join('\n').trim();
-        if (text.length > maxLength) text = text.substring(0, maxLength) + '...';
-        return text;
+        return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
       }
     }
   }
@@ -87,9 +83,8 @@ export function extractContext(activeElement, platformConfig) {
 
   // Get user-selected text
   var selection = window.getSelection();
-  if (selection && selection.toString().trim()) {
-    result.selectedText = selection.toString().trim();
-  }
+  var selectedText = selection && selection.toString().trim();
+  if (selectedText) result.selectedText = selectedText;
 
   // Find the nearest post container
   var postEl = findNearestAncestor(activeElement, platformConfig.postContainers, 20);
