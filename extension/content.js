@@ -2537,6 +2537,27 @@
 
     clickCommentButton: function (postEl, callback) {
       var self = this;
+      // If the tab is in the background, activate it FIRST and retry once it's genuinely
+      // visible. The old approach only SPOOFED document.hidden, but the browser still hadn't
+      // painted the tab — so getBoundingClientRect() returned zeros and the comment editor
+      // often wasn't rendered yet. That spoof-without-painting is the root cause of the
+      // intermittent background-tab failures on LinkedIn. background.js already implements
+      // { type:'activateTab' } (insertMention relies on the same mechanism).
+      if (document.hidden && !self._activatedForComment) {
+        self._activatedForComment = true;
+        try { chrome.runtime.sendMessage({ type: 'activateTab' }); } catch (e) {}
+        var visTries = 0;
+        (function waitForVisible() {
+          visTries++;
+          if (!document.hidden || visTries > 20) {
+            self.clickCommentButton(postEl, callback); // re-enter now that the tab is visible
+          } else {
+            bgTimeout(waitForVisible, 100); // poll ~every 100ms, up to ~2s
+          }
+        })();
+        return;
+      }
+      self._activatedForComment = false; // reset so the next comment can activate again
       var selector = platformConfig.commentButtonSelector;
       if (!selector) { callback(null); return; }
       var isShreddit = postEl.tagName && postEl.tagName.toLowerCase() === 'shreddit-post';
