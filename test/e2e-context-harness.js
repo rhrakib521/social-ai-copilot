@@ -14,7 +14,7 @@ let contentSrc = fs.readFileSync(path.join(__dirname, '..', 'extension', 'conten
 const _iifeEnd = contentSrc.lastIndexOf('})();');
 if (_iifeEnd === -1) { console.error('No IIFE end in content.js'); process.exit(2); }
 contentSrc = contentSrc.slice(0, _iifeEnd) +
-  '\n;try { window.__saicTest = { extractContext: extractContext, heuristicTextExtract: heuristicTextExtract, expandCollapsedPost: expandCollapsedPost }; } catch (e) {}\n' +
+  '\n;try { window.__saicTest = { extractContext: extractContext, heuristicTextExtract: heuristicTextExtract, expandCollapsedPost: expandCollapsedPost, runFieldDiagnostics: runFieldDiagnostics }; } catch (e) {}\n' +
   contentSrc.slice(_iifeEnd);
 
 async function makeContentDom(url, fixture) {
@@ -203,8 +203,9 @@ function check(name, cond, detail) {
   else { fail++; console.log('  FAIL ' + name + (detail ? ' — ' + detail : '')); }
 }
 
-async function runThroughApi(platform, url, fixture, fieldSelector) {
+async function runThroughApi(platform, url, fixture, fieldSelector, pre) {
   const ctx = await makeContentDom(url, fixture);
+  if (pre) pre(ctx);
   const field = ctx.document.querySelector(fieldSelector);
   if (!field) throw new Error('fixture field not found: ' + fieldSelector);
   const context = ctx.__saicTest.extractContext(field);
@@ -292,6 +293,81 @@ async function main() {
     const ctx = await makeContentDom('https://www.linkedin.com/feed/', RENAMED);
     const result = ctx.__saicTest.extractContext(ctx.document.querySelector('.zzz-composer .ql-editor'));
     check('heuristic finds text when all classes renamed', /RENAMED-POST/.test(result.postText || ''), JSON.stringify((result.postText || '').slice(0, 120)));
+  }
+
+  console.log('[8] Composer in a side drawer (split view — post NOT above field, no dialog)');
+  {
+    // Real-browser geometry: jsdom rects are all-zero, so mock getBoundingClientRect
+    // to read data-x/y/w/h attributes off the fixture elements.
+    const DRAWER = `
+<div id="split">
+  <div class="feed-shared-update-v2" data-urn="urn:li:activity:71007" data-x="0" data-y="100" data-w="600" data-h="400">
+    <div class="update-components-text"><span class="break-words"><span dir="ltr">DRAWER-POST: The post sits in the left pane of the split view, beside the composer.</span></span></div>
+  </div>
+  <div class="feed-shared-update-v2" data-urn="urn:li:activity:71008" data-x="0" data-y="2000" data-w="600" data-h="400">
+    <div class="update-components-text"><span class="break-words">DECOY-BELOW: much further down the feed</span></div>
+  </div>
+  <aside class="comments-drawer" data-x="700" data-y="200" data-w="300" data-h="300">
+    <div class="comments-comment-texteditor" data-x="710" data-y="210" data-w="280" data-h="40">
+      <div class="ql-editor" contenteditable="true" role="textbox"></div>
+    </div>
+  </aside>
+</div>`;
+    const rectMock = function (ctx) {
+      ctx.window.Element.prototype.getBoundingClientRect = function () {
+        var x = parseFloat(this.getAttribute('data-x') || '');
+        var y = parseFloat(this.getAttribute('data-y') || '');
+        var w = parseFloat(this.getAttribute('data-w') || '');
+        var h = parseFloat(this.getAttribute('data-h') || '');
+        if (isNaN(x) || isNaN(y)) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+        return { top: y, left: x, right: x + w, bottom: y + h, width: w, height: h };
+      };
+    };
+    const { request } = await runThroughApi('linkedin', 'https://www.linkedin.com/feed/', DRAWER, 'aside .ql-editor', rectMock);
+    const userMsg = request.body.messages[1].content;
+    check('split-view: nearest post beside the composer wins', /DRAWER-POST/.test(userMsg), userMsg.slice(0, 200));
+    check('split-view: distant decoy post excluded', !/DECOY-BELOW/.test(userMsg));
+  }
+
+  console.log('[9] Composer inside a Web Component shadow root');
+  {
+    const ctx = await makeContentDom('https://www.linkedin.com/feed/', '<div id="app-host"></div>');
+    const host = ctx.document.getElementById('app-host');
+    const sr = host.attachShadow({ mode: 'open' });
+    sr.innerHTML = '<div class="feed-shared-update-v2" data-urn="urn:li:activity:71009">' +
+      '<div class="update-components-text"><span class="break-words"><span dir="ltr">SHADOW-POST: rendered inside a web component shadow root.</span></span></div>' +
+      '<li-composer></li-composer>' +
+      '</div>';
+    // The editable field sits in a SECOND nested shadow root, so the ancestor
+    // walk must cross two shadow boundaries to reach the post.
+    const composerHost = sr.querySelector('li-composer');
+    const sr2 = composerHost.attachShadow({ mode: 'open' });
+    sr2.innerHTML = '<div class="ql-editor" contenteditable="true" role="textbox"></div>';
+    const field = sr2.querySelector('.ql-editor');
+    const result = ctx.__saicTest.extractContext(field);
+    check('shadow root: post found across shadow boundaries', /SHADOW-POST/.test(result.postText || ''), JSON.stringify((result.postText || '').slice(0, 120)));
+  }
+
+  console.log('[10] Deeply nested composer (24 wrapper levels)');
+  {
+    const nest = '<div class="feed-shared-update-v2" data-urn="urn:li:activity:71010">' +
+      '<div class="update-components-text"><span class="break-words"><span dir="ltr">DEEP-POST: the comment editor is buried 24 wrapper divs deep.</span></span></div>' +
+      '<div class="comments-comment-box">' + '<div class="wrap">'.repeat(24) +
+      '<div class="ql-editor" contenteditable="true" role="textbox"></div>' +
+      '</div>'.repeat(24) + '</div></div>';
+    const { request } = await runThroughApi('linkedin', 'https://www.linkedin.com/feed/', nest, '.ql-editor');
+    const userMsg = request.body.messages[1].content;
+    check('deep nesting: post found beyond depth 20', /DEEP-POST/.test(userMsg), userMsg.slice(0, 200));
+  }
+
+  console.log('[11] Diagnostics report content');
+  {
+    const ctx = await makeContentDom('https://www.linkedin.com/feed/', LI_STANDARD);
+    const field = ctx.document.querySelector('.comments-comment-texteditor .ql-editor');
+    const report = ctx.__saicTest.runFieldDiagnostics(field);
+    check('report has ancestor chain', /ANCESTOR CHAIN/.test(report) && /feed-shared-update-v2/.test(report));
+    check('report has selector census', /POST SELECTOR CENSUS/.test(report) && /\.feed-shared-update-v2 → \d+ match/.test(report));
+    check('report has extraction result', /EXTRACTION RESULT/.test(report) && /AWS bill/.test(report));
   }
 
   console.log('\n== Results: ' + pass + ' passed, ' + fail + ' failed ==');

@@ -691,7 +691,7 @@
     maxDepth = maxDepth || 15;
     var current = element;
     var depth = 0;
-    while (current && current !== document.body && depth < maxDepth) {
+    while (current && depth < maxDepth) {
       for (var i = 0; i < selectors.length; i++) {
         if (current.matches && current.matches(selectors[i])) return current;
       }
@@ -702,7 +702,16 @@
           return current;
         }
       }
-      current = current.parentElement;
+      if (current === document.body) break;
+      // Cross shadow-root boundaries: if there is no parentElement, the
+      // element may live inside a Web Component's shadow tree — continue
+      // from the shadow host's parent.
+      if (current.parentElement) {
+        current = current.parentElement;
+      } else {
+        var root = current.getRootNode && current.getRootNode();
+        current = (root && root.host) ? root.host : null;
+      }
       depth++;
     }
     return null;
@@ -1061,7 +1070,7 @@
     var result = { postText: '', author: '', nearbyComments: [], selectedText: '', engagement: null };
     if (!activeEl || !platformConfig) return result;
 
-    var postEl = findNearestAncestor(activeEl, platformConfig.postContainers, 20);
+    var postEl = findNearestAncestor(activeEl, platformConfig.postContainers, 30);
 
     // Reddit fallback: if no ancestor found, find nearest shreddit-post by visual position
     if (!postEl && platformName === 'reddit') {
@@ -1102,31 +1111,49 @@
       var liFieldRect = activeEl.getBoundingClientRect();
       var liPostSelector = platformConfig.postSelector || platformConfig.postContainers[0];
       // If the field is inside a dialog (LinkedIn opens posts in a modal),
-      // search ONLY inside it — a page-wide search would match the feed post
-      // behind the modal and answer the wrong post.
+      // search ONLY inside it first — a page-wide search would match the feed
+      // post behind the modal and answer the wrong post.
       var liSearchRoot = (activeEl.closest && activeEl.closest('[role="dialog"]')) || document;
-      var liAllPosts = liSearchRoot.querySelectorAll(liPostSelector);
-      // LinkedIn extra: also query by data-urn attribute for resilient post detection
-      if (platformName === 'linkedin') {
-        var urnPosts = liSearchRoot.querySelectorAll('[data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]');
-        // Merge urn-based posts (deduplicate by element)
-        var seen = new Set();
-        for (var up = 0; up < liAllPosts.length; up++) seen.add(liAllPosts[up]);
-        for (var uu = 0; uu < urnPosts.length; uu++) {
-          if (!seen.has(urnPosts[uu])) {
-            liAllPosts = Array.prototype.slice.call(liAllPosts).concat([urnPosts[uu]]);
+
+      function liCollectPosts(root) {
+        var posts = root.querySelectorAll(liPostSelector);
+        // LinkedIn extra: also query by data-urn attribute for resilient post detection
+        if (platformName === 'linkedin') {
+          var urnPosts = root.querySelectorAll('[data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]');
+          var seenSet = new Set();
+          for (var up = 0; up < posts.length; up++) seenSet.add(posts[up]);
+          for (var uu = 0; uu < urnPosts.length; uu++) {
+            if (!seenSet.has(urnPosts[uu])) {
+              posts = Array.prototype.slice.call(posts).concat([urnPosts[uu]]);
+            }
           }
         }
+        return posts;
       }
-      var liBestPost = null, liBestDist = Infinity;
-      for (var liPi = 0; liPi < liAllPosts.length; liPi++) {
-        var liPr = liAllPosts[liPi].getBoundingClientRect();
-        if (liPr.height === 0) continue;
-        // Post should be above the comment field
-        var liDy = liFieldRect.top - liPr.top;
-        if (liDy < 0) continue; // skip posts below the field
-        var liDist = liDy + Math.abs(liFieldRect.left - liPr.left) * 0.3;
-        if (liDist < liBestDist) { liBestDist = liDist; liBestPost = liAllPosts[liPi]; }
+
+      function liNearestPost(posts, requireAbove) {
+        var best = null, bestDist = Infinity;
+        for (var pi = 0; pi < posts.length; pi++) {
+          var pr = posts[pi].getBoundingClientRect();
+          if (pr.height === 0) continue;
+          var dy = liFieldRect.top - pr.top;
+          if (requireAbove && dy < 0) continue; // prefer posts above the field
+          var dist = Math.abs(dy) + Math.abs(liFieldRect.left - pr.left) * 0.3;
+          if (dist < bestDist) { bestDist = dist; best = posts[pi]; }
+        }
+        return best;
+      }
+
+      // Pass 1: nearest post ABOVE the field inside the search root (the
+      // classic layout — comment box sits under its post).
+      var liBestPost = liNearestPost(liCollectPosts(liSearchRoot), true);
+      // Pass 2: split view / side drawer — the composer can sit BESIDE the
+      // post or in a container with no post inside. Any direction, same root.
+      if (!liBestPost) liBestPost = liNearestPost(liCollectPosts(liSearchRoot), false);
+      // Pass 3: the field's container (e.g. a composer dialog) holds no post
+      // at all — fall back to the nearest post anywhere on the page.
+      if (!liBestPost && liSearchRoot !== document) {
+        liBestPost = liNearestPost(liCollectPosts(document), false);
       }
       if (liBestPost) {
         postEl = liBestPost;
@@ -1347,6 +1374,129 @@
     };
   }
 
+  // ── Live diagnostics ──
+  // Runs on the user's actual page when extraction fails, so the exact DOM
+  // breakage (renamed classes, shadow roots, split view) can be seen and
+  // shared without guessing.
+  function runFieldDiagnostics(field) {
+    var L = [];
+    try {
+      L.push('=== Social AI Copilot diagnostics ===');
+      L.push('Time: ' + new Date().toISOString());
+      L.push('URL: ' + location.href);
+      L.push('Platform: ' + platformName);
+      L.push('');
+      L.push('FIELD');
+      try {
+        L.push('  tag: <' + (field.tagName || '?').toLowerCase() + '> | class: "' +
+          String(field.className || '').slice(0, 120) + '" | aria-label: "' +
+          ((field.getAttribute && field.getAttribute('aria-label')) || '') + '"');
+      } catch (e) { L.push('  (field info failed: ' + e.message + ')'); }
+      L.push('');
+      L.push('ANCESTOR CHAIN (from field, up to 30 levels):');
+      var cur = field, d = 0;
+      while (cur && d < 30) {
+        var t = cur.tagName ? cur.tagName.toLowerCase() : '#node';
+        var cls = String(cur.className || '').slice(0, 100);
+        var urn = (cur.getAttribute && cur.getAttribute('data-urn')) || '';
+        L.push('  ' + d + ': <' + t + '> class="' + cls + '"' + (urn ? ' data-urn="' + urn + '"' : ''));
+        if (cur === document.body) { L.push('  (reached <body>)'); break; }
+        if (cur.parentElement) {
+          cur = cur.parentElement;
+        } else {
+          var root = cur.getRootNode && cur.getRootNode();
+          if (root && root.host) { cur = root.host; L.push('  -- crossed shadow boundary --'); }
+          else break;
+        }
+        d++;
+      }
+      L.push('');
+      L.push('POST SELECTOR CENSUS:');
+      if (field.closest) {
+        L.push('  field inside [role="dialog"]: ' + (!!field.closest('[role="dialog"]')));
+      }
+      var censusSels = (platformConfig && platformConfig.postContainers ? platformConfig.postContainers.slice() : []);
+      if (platformConfig && platformConfig.postSelector) censusSels.push(platformConfig.postSelector);
+      for (var ci = 0; ci < censusSels.length; ci++) {
+        var sel = censusSels[ci];
+        try {
+          L.push('  ' + sel + ' → ' + document.querySelectorAll(sel).length + ' match(es)');
+        } catch (e) {
+          L.push('  [INVALID SELECTOR] ' + sel + ' → ' + e.message);
+        }
+      }
+      try {
+        var urnCount = document.querySelectorAll('[data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]').length;
+        L.push('  [data-urn*=urn:li:activity/ugcPost/share] → ' + urnCount + ' match(es)');
+      } catch (e) { /* non-LinkedIn */ }
+      L.push('');
+      L.push('EXTRACTION RESULT:');
+      var dctx = extractContext(field);
+      L.push('  postText: ' + (dctx.postText
+        ? dctx.postText.length + ' chars | ' + dctx.postText.replace(/\s+/g, ' ').slice(0, 100)
+        : 'EMPTY'));
+      L.push('  author: ' + (dctx.author || 'none'));
+      L.push('  engagement: ' + JSON.stringify(dctx.engagement));
+      L.push('');
+      L.push('Use "Copy report" and share it to get the selectors fixed.');
+    } catch (e) {
+      L.push('DIAGNOSTICS ERROR: ' + e.message);
+    }
+    return L.join('\n');
+  }
+
+  function showDiagnosticsOverlay(reportText) {
+    var old = document.getElementById('saic-diag-overlay');
+    if (old && old.remove) old.remove();
+
+    var ov = document.createElement('div');
+    ov.id = 'saic-diag-overlay';
+    ov.style.cssText = 'position:fixed;top:40px;left:40px;right:40px;bottom:40px;z-index:2147483647;' +
+      'background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px;font-family:Consolas,monospace;' +
+      'font-size:12px;line-height:1.5;box-shadow:0 12px 48px rgba(0,0,0,.5);display:flex;flex-direction:column;';
+
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;';
+
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.textContent = 'Copy report';
+    copyBtn.style.cssText = 'background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;';
+    copyBtn.addEventListener('click', function () {
+      var done = function () { copyBtn.textContent = 'Copied ✓'; setTimeout(function () { copyBtn.textContent = 'Copy report'; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(reportText).then(done, function () { fallbackCopy(); });
+      } else { fallbackCopy(); }
+      function fallbackCopy() {
+        // select the <pre> text and use execCommand as a fallback
+        var rng = document.createRange();
+        rng.selectNodeContents(pre);
+        var s = window.getSelection();
+        s.removeAllRanges(); s.addRange(rng);
+        try { document.execCommand('copy'); done(); } catch (e) { copyBtn.textContent = 'Select & copy manually'; }
+        s.removeAllRanges();
+      }
+    });
+
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = 'Close';
+    closeBtn.style.cssText = 'background:#334155;color:#e2e8f0;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;';
+    closeBtn.addEventListener('click', function () { if (ov.remove) ov.remove(); else if (ov.parentNode) ov.parentNode.removeChild(ov); });
+
+    bar.appendChild(copyBtn);
+    bar.appendChild(closeBtn);
+    ov.appendChild(bar);
+
+    var pre = document.createElement('pre');
+    pre.style.cssText = 'margin:0;overflow:auto;white-space:pre-wrap;word-break:break-all;flex:1;';
+    pre.textContent = reportText;
+    ov.appendChild(pre);
+
+    document.body.appendChild(ov);
+    console.log('[SAIC] Diagnostics report:\n' + reportText);
+  }
+
   function openPopover(field) {
     hidePopover();
     removeExistingTrigger();
@@ -1565,9 +1715,20 @@
     postPanel.appendChild(postActionsRow);
 
     // ── Context badge: shows WHAT was read from the page, so it's obvious
-    // whether the AI actually sees the post BEFORE generating anything. ──
+    // whether the AI actually sees the post BEFORE generating anything.
+    // When it fails, clicking it runs live diagnostics on this exact page. ──
     var contextBadge = document.createElement('div');
     contextBadge.className = 'saic-context-badge';
+    function badgeWarn(msg) {
+      contextBadge.textContent = msg + ' (click to diagnose)';
+      contextBadge.classList.add('saic-context-badge-warn');
+      contextBadge.style.cursor = 'pointer';
+      contextBadge.title = 'Run diagnostics';
+      contextBadge.addEventListener('click', function () {
+        try { showDiagnosticsOverlay(runFieldDiagnostics(field)); }
+        catch (e) { showDiagnosticsOverlay('DIAGNOSTICS ERROR: ' + e.message); }
+      });
+    }
     try {
       var previewCtx = extractContext(field);
       var ptLen = (previewCtx.postText || '').trim().length;
@@ -1575,12 +1736,15 @@
         var ptPreview = previewCtx.postText.replace(/\s+/g, ' ').slice(0, 90);
         contextBadge.textContent = '✓ Post read (' + ptLen + ' chars): ' + ptPreview + (ptLen > 90 ? '…' : '');
       } else {
-        contextBadge.textContent = '⚠ No post text detected — the AI would answer blind. Try clicking into the comment box again or reload the page.';
-        contextBadge.classList.add('saic-context-badge-warn');
+        var probeEl = findNearestAncestor(field, (platformConfig && platformConfig.postContainers) || [], 30);
+        if (probeEl) {
+          badgeWarn('⚠ Post was found but its text could not be extracted');
+        } else {
+          badgeWarn('⚠ No post detected (normal when writing a NEW post — otherwise something is wrong)');
+        }
       }
     } catch (ctxErr) {
-      contextBadge.textContent = '⚠ Context read failed: ' + ctxErr.message;
-      contextBadge.classList.add('saic-context-badge-warn');
+      badgeWarn('⚠ Context read failed: ' + ctxErr.message);
     }
 
     popover.appendChild(toolbar);
