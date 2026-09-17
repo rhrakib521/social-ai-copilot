@@ -440,8 +440,22 @@
         '[contenteditable="true"][aria-label*="Write"]'
       ],
       postContainers: [
-        '[data-pagelet*="feed"] [role="article"]',
+        // NOTE: real FB attribute values are camel-cased ("FeedFeed_Story"),
+        // so the substring match must be case-insensitive.
+        '[data-pagelet*="feed" i] [role="article"]',
         '[aria-label*="Comment"]'
+      ],
+      // Facebook class names are minified — data attributes are the stable
+      // hooks. Tried ONE AT A TIME in this priority order.
+      postContentSelector: [
+        'div[data-ad-comet-preview]',
+        'div[data-ad-preview="message"]',
+        'div[data-ad-comet-preview="message"]',
+        '[data-text="true"]',
+        'div[dir="auto"] > span'
+      ].join(', '),
+      commentContainers: [
+        '[aria-label^="Comment"]'
       ],
       authorSelector: 'a[role="link"] span a span, h4 a span',
       personality: 'You are writing for Facebook. The tone should be friendly, conversational, and engaging. Content should feel natural and encourage interaction.',
@@ -724,32 +738,36 @@
    * Falls back to full extractText if no content-specific selectors match.
    */
   /**
-   * LinkedIn-specific heuristic text extraction.
-   * When all known CSS selectors fail (because LinkedIn renamed classes),
+   * Heuristic text extraction (any platform).
+   * When all known CSS selectors fail (because the site renamed classes),
    * this walks the post DOM structure to find the main text content block
    * by analysing element size, position, and content characteristics.
    */
-  function linkedinHeuristicTextExtract(postEl, maxLength) {
+  function heuristicTextExtract(postEl, maxLength) {
     if (!postEl) return '';
     maxLength = maxLength || 2000;
 
     // Strategy 1: Look for the largest text-bearing <p> or <span> block inside the post.
-    // LinkedIn posts typically have a dedicated content div with paragraphs.
-    var candidates = postEl.querySelectorAll('p, span[dir="ltr"], div[dir="ltr"]');
+    // Posts typically have a dedicated content div with paragraphs.
+    var candidates = postEl.querySelectorAll('p, span[dir="ltr"], div[dir="ltr"], span[dir="auto"], div[dir="auto"]');
     var best = null;
     var bestLen = 0;
     for (var ci = 0; ci < candidates.length; ci++) {
       var cEl = candidates[ci];
-      // Skip elements that look like UI chrome (buttons, headers, social bar)
+      // Skip anything inside a button ("Like", "Follow", "…more") — that is UI chrome
+      if (cEl.closest && cEl.closest('button, [role="button"], a')) continue;
+      // Skip elements that look like UI chrome (headers, social bar)
       var parentClasses = (cEl.parentElement && cEl.parentElement.className) || '';
       var selfClasses = cEl.className || '';
       var combined = (parentClasses + ' ' + selfClasses).toLowerCase();
       if (combined.indexOf('actor') !== -1) continue;     // author header
       if (combined.indexOf('social-counts') !== -1) continue;  // engagement bar
+      if (combined.indexOf('social-activity') !== -1) continue;
       if (combined.indexOf('comment-button') !== -1) continue;
       if (combined.indexOf('reaction') !== -1 && combined.indexOf('text') === -1) continue;
       if (combined.indexOf('footer') !== -1) continue;
       if (combined.indexOf('actions-bar') !== -1) continue;
+      if (combined.indexOf('see-more') !== -1 || combined.indexOf('show-more') !== -1) continue;
       if (combined.indexOf('control') !== -1 && combined.indexOf('text') === -1) continue;
       // Skip very short bits (names, timestamps, labels)
       var cText = (cEl.innerText || '').trim();
@@ -782,7 +800,11 @@
         var innerParts = [];
         var walker = document.createTreeWalker(child, NodeFilter.SHOW_TEXT, null, false);
         while (walker.nextNode()) {
-          var nodeVal = (walker.currentNode.textContent || '').trim();
+          var wNode = walker.currentNode;
+          // Ignore text that lives inside buttons/links (UI chrome)
+          if (wNode.parentElement && wNode.parentElement.closest &&
+              wNode.parentElement.closest('button, [role="button"], a')) continue;
+          var nodeVal = (wNode.textContent || '').trim();
           if (nodeVal && nodeVal.length > 2) innerParts.push(nodeVal);
         }
         if (innerParts.length > 0) {
@@ -794,6 +816,25 @@
     }
 
     return '';
+  }
+
+  /**
+   * Expand a truncated ("...more") post so the FULL text is in the DOM before
+   * extraction. LinkedIn lazy-loads long post text behind a see-more toggle;
+   * without this the AI only ever sees the first ~2 lines of long posts.
+   */
+  function expandCollapsedPost(postEl) {
+    if (!postEl || !postEl.querySelectorAll) return;
+    var btns = postEl.querySelectorAll(
+      '.see-more, ' +
+      'button.feed-shared-inline-show-more-text, ' +
+      '.feed-shared-inline-show-more-text button, ' +
+      '[data-control-name="see_more"], ' +
+      'div[role="button"][aria-label*="more" i] span.artdeco-button__text'
+    );
+    for (var i = 0; i < btns.length; i++) {
+      try { btns[i].click(); } catch (e) { /* best effort */ }
+    }
   }
 
   /**
@@ -838,7 +879,7 @@
     }
 
     // Check heuristic result
-    diag.heuristicText = linkedinHeuristicTextExtract(postEl, 100);
+    diag.heuristicText = heuristicTextExtract(postEl, 100);
 
     console.log('[SAIC] LinkedIn DOM diagnostic:', JSON.stringify(diag, null, 2));
   }
@@ -886,16 +927,15 @@
       }
     }
 
-    // LinkedIn-specific heuristic fallback: when LinkedIn changes CSS class names,
-    // walk the DOM structure to find the text content intelligently.
+    // Heuristic fallback for ANY platform: when the site changes CSS class
+    // names, walk the DOM structure to find the text content intelligently.
+    var heuristicText = heuristicTextExtract(postEl, maxLength);
+    if (heuristicText && heuristicText.length > 10) {
+      console.log('[SAIC] ' + platformName + ': selectors missed, used heuristic extraction (' + heuristicText.length + ' chars)');
+      if (platformName === 'linkedin') logLinkedInDiagnostic(postEl); // log so we can update selectors
+      return heuristicText;
+    }
     if (platformName === 'linkedin') {
-      var heuristicText = linkedinHeuristicTextExtract(postEl, maxLength);
-      if (heuristicText && heuristicText.length > 10) {
-        console.log('[SAIC] LinkedIn: selectors missed, used heuristic extraction (' + heuristicText.length + ' chars)');
-        // Log diagnostic so we can update selectors
-        logLinkedInDiagnostic(postEl);
-        return heuristicText;
-      }
       // Even heuristic failed — log diagnostic for debugging
       console.log('[SAIC] LinkedIn: ALL extraction methods failed for post element');
       logLinkedInDiagnostic(postEl);
@@ -1116,6 +1156,9 @@
     }
 
     if (postEl) {
+      // Expand truncated posts first — long LinkedIn posts are cut behind a
+      // "...more" toggle and the full text is not in the DOM until clicked.
+      expandCollapsedPost(postEl);
       result.selectedText = getSelectedTextIn(postEl);
       result.postText = cleanExtractPostText(postEl, platformConfig);
       if (platformConfig.authorSelector) {
@@ -1521,7 +1564,27 @@
     postActionsRow.appendChild(postGenerateBtn);
     postPanel.appendChild(postActionsRow);
 
+    // ── Context badge: shows WHAT was read from the page, so it's obvious
+    // whether the AI actually sees the post BEFORE generating anything. ──
+    var contextBadge = document.createElement('div');
+    contextBadge.className = 'saic-context-badge';
+    try {
+      var previewCtx = extractContext(field);
+      var ptLen = (previewCtx.postText || '').trim().length;
+      if (ptLen > 0) {
+        var ptPreview = previewCtx.postText.replace(/\s+/g, ' ').slice(0, 90);
+        contextBadge.textContent = '✓ Post read (' + ptLen + ' chars): ' + ptPreview + (ptLen > 90 ? '…' : '');
+      } else {
+        contextBadge.textContent = '⚠ No post text detected — the AI would answer blind. Try clicking into the comment box again or reload the page.';
+        contextBadge.classList.add('saic-context-badge-warn');
+      }
+    } catch (ctxErr) {
+      contextBadge.textContent = '⚠ Context read failed: ' + ctxErr.message;
+      contextBadge.classList.add('saic-context-badge-warn');
+    }
+
     popover.appendChild(toolbar);
+    popover.appendChild(contextBadge);
     popover.appendChild(postPanel);
     popover.appendChild(resultCard);
     popover.appendChild(resultActions);
@@ -1680,6 +1743,18 @@
   function handleAction(task, tone, contextId, field, resultCard, insertBtn, regenBtn, resultActions, activePresets, activeCustomInstr) {
     try {
       var context = extractContext(field);
+
+      // Log exactly what the AI will receive, so "the AI didn't read the
+      // post" is diagnosable from the console in one glance.
+      console.log('[SAIC] Context for ' + task + ' on ' + platformName + ':', JSON.stringify({
+        postText: context.postText
+          ? context.postText.length + ' chars | ' + context.postText.replace(/\s+/g, ' ').slice(0, 140)
+          : '(EMPTY — AI will answer blind)',
+        author: context.author || '(none)',
+        selectedText: context.selectedText ? context.selectedText.length + ' chars' : '(none)',
+        nearbyComments: (context.nearbyComments || []).length,
+        engagement: context.engagement || null
+      }));
 
       // Resolve context info — only use what's explicitly selected
       var contextInfo = '';

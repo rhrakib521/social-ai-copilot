@@ -282,6 +282,78 @@ async function main() {
   r = await sendGenerate(req({}));
   check('deepseek-reasoner budget >= 2000', !r.error && r.text === 'reasoner ok', r.error || '');
 
+  // ── TEST 16: gpt-6-astra is treated as a reasoning model (no temperature) ──
+  console.log('[16] gpt-6-astra reasoning params');
+  setSettings({ provider: 'openai', apiKey: 'sk-x', openaiModel: 'gpt-6-astra' });
+  fetchLog = []; responders = [{
+    match: (u) => u.includes('api.openai.com'),
+    respond: (u, body) => {
+      if (body.temperature !== undefined && body.temperature !== 1) {
+        return { status: 400, body: { error: { message: "Unsupported value: 'temperature'" } } };
+      }
+      if ((body.max_completion_tokens || 0) < 2000) {
+        return { status: 200, body: { choices: [{ message: { content: '' }, finish_reason: 'length' }] } };
+      }
+      return { status: 200, body: { choices: [{ message: { content: 'astra ok' } }] } };
+    }
+  }];
+  r = await sendGenerate(req({}));
+  check('gpt-6-astra: no temperature + budget floor', !r.error && r.text === 'astra ok', r.error || '');
+
+  // ── TEST 17: gemini-3.8-flash (Sept 2026 default) budget floor ──
+  console.log('[17] gemini-3.8-flash budget floor');
+  setSettings({ provider: 'gemini', apiKey: 'g-x', geminiModel: 'gemini-3.8-flash' });
+  fetchLog = []; responders = [{
+    match: (u) => u.includes('generativelanguage.googleapis.com'),
+    respond: (u, body) => {
+      if ((body.max_tokens || 0) >= 1500) return { status: 200, body: { choices: [{ message: { content: 'g38 ok' } }] } };
+      return { status: 200, body: { choices: [{ message: { content: '' }, finish_reason: 'MAX_TOKENS' }] } };
+    }
+  }];
+  r = await sendGenerate(req({}));
+  check('gemini-3.8-flash budget >= 1500', !r.error && r.text === 'g38 ok', r.error || '');
+
+  // ── TEST 18: deepseek-v4-pro is hybrid thinking → budget floor + temp 1 ──
+  console.log('[18] deepseek-v4-pro thinking budget');
+  setSettings({ provider: 'deepseek', apiKey: 'ds-x', deepseekModel: 'deepseek-v4-pro' });
+  fetchLog = []; responders = [{
+    match: (u) => u.includes('api.deepseek.com'),
+    respond: (u, body) => {
+      if ((body.max_tokens || 0) >= 2000 && body.temperature === 1) {
+        return { status: 200, body: { choices: [{ message: { content: 'v4pro ok' } }] } };
+      }
+      return { status: 200, body: { choices: [{ message: { content: '', reasoning_content: 'thinking...' } }] } };
+    }
+  }];
+  r = await sendGenerate(req({}));
+  check('deepseek-v4-pro budget >= 2000 + temperature 1', !r.error && r.text === 'v4pro ok', r.error || '');
+
+  // ── TEST 19: deepseek-flash (new canonical name) is non-reasoning ──
+  console.log('[19] deepseek-flash normal params');
+  setSettings({ provider: 'deepseek', apiKey: 'ds-x', deepseekModel: 'deepseek-flash' });
+  fetchLog = []; responders = [{
+    match: (u) => u.includes('api.deepseek.com'),
+    respond: (u, body) => {
+      if (body.temperature === 0.7) return { status: 200, body: { choices: [{ message: { content: 'flash ok' } }] } };
+      return { status: 400, body: { error: { message: 'wrong temperature: ' + body.temperature } } };
+    }
+  }];
+  r = await sendGenerate(req({}));
+  check('deepseek-flash temperature 0.7 (non-thinking)', !r.error && r.text === 'flash ok', r.error || '');
+
+  // ── TEST 20: glm-5.2 disables thinking (glm-5 prefix) ──
+  console.log('[20] glm-5.2 thinking disabled');
+  setSettings({ provider: 'glm', apiKey: 'g.x', glmModel: 'glm-5.2', glmEndpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions' });
+  fetchLog = []; responders = [{
+    match: (u) => u.includes('bigmodel.cn') || u.includes('z.ai'),
+    respond: (u, body) => {
+      if (body.thinking && body.thinking.type === 'disabled') return { status: 200, body: { choices: [{ message: { content: 'g52 ok' } }] } };
+      return { status: 200, body: { choices: [{ message: { content: '', reasoning_content: 'thought too long' } }] } };
+    }
+  }];
+  r = await sendGenerate(req({}));
+  check('glm-5.2 sends thinking disabled', !r.error && r.text === 'g52 ok', r.error || '');
+
   console.log('\n== Results: ' + pass + ' passed, ' + fail + ' failed ==');
   process.exit(fail > 0 ? 1 : 0);
 }

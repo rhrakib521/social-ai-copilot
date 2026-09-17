@@ -78,7 +78,7 @@ function extractChatText(data, providerLabel) {
 
 function isOpenAIReasoningModel(model) {
   var m = (model || '').toLowerCase();
-  return m.indexOf('gpt-5') === 0 || /^o[0-9]/.test(m);
+  return m.indexOf('gpt-5') === 0 || m.indexOf('gpt-6') === 0 || /^o[0-9]/.test(m);
 }
 
 function glmThinkingCanDisable(model) {
@@ -287,8 +287,9 @@ async function callDeepSeek(messages, options) {
   var model = options.deepseekModel || 'deepseek-chat';
   var maxTokens = options.maxTokens || 300;
   // Reasoning models: reasoning counts against max_tokens — without headroom
-  // the answer comes back empty.
-  var deepseekReasoning = /reasoner|deepseek-r1/i.test(model || '');
+  // the answer comes back empty. V4 Pro is a hybrid thinking model; the old
+  // deepseek-reasoner/r1 IDs were retired in July 2026.
+  var deepseekReasoning = /reasoner|deepseek-r1|v4-pro|deepseek-pro/i.test(model || '');
   if (deepseekReasoning) {
     maxTokens = Math.max(maxTokens, 2000);
   }
@@ -584,12 +585,12 @@ var DEFAULT_SETTINGS = {
   provider: 'openai',
   authMode: 'user_key',
   apiKey: '',
-  openaiModel: 'gpt-4.1-mini',
-  glmModel: 'glm-5.1',
+  openaiModel: 'gpt-5.6-terra',
+  glmModel: 'glm-5.2',
   glmEndpoint: 'auto',
-  geminiModel: 'gemini-2.5-flash',
-  deepseekModel: 'deepseek-v4-flash',
-  qwenModel: 'qwen-plus',
+  geminiModel: 'gemini-3.8-flash',
+  deepseekModel: 'deepseek-flash',
+  qwenModel: 'qwen3.8-flash',
   backendToken: '',
   contexts: [],
   priorityTargets: [],

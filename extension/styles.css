@@ -335,6 +335,29 @@
   border: 1px solid #fecaca;
 }
 
+/* ===== Context badge (shows what the extension read from the page) ===== */
+.saic-context-badge {
+  margin: 0 8px 4px 8px;
+  padding: 5px 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #166534;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.saic-context-badge.saic-context-badge-warn {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
 /* ===== Result Actions Row ===== */
 .saic-result-actions {
   display: flex;

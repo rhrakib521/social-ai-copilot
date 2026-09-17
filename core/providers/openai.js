@@ -5,7 +5,7 @@ const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 
 function isOpenAIReasoningModel(model) {
   const m = (model || '').toLowerCase();
-  return m.indexOf('gpt-5') === 0 || /^o[0-9]/.test(m);
+  return m.indexOf('gpt-5') === 0 || m.indexOf('gpt-6') === 0 || /^o[0-9]/.test(m);
 }
 
 /**

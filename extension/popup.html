@@ -324,40 +324,39 @@
       <div id="openaiModelGroup" class="hidden">
         <label for="openaiModel">OpenAI Model</label>
         <select id="openaiModel">
-          <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-          <option value="gpt-4.1">GPT-4.1</option>
-          <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
-          <option value="o4-mini">o4-mini</option>
-          <option value="o3">o3</option>
-          <option value="gpt-5-nano">GPT-5 Nano</option>
-          <option value="gpt-5-mini">GPT-5 Mini</option>
-          <option value="gpt-5">GPT-5</option>
-          <option value="gpt-5.1">GPT-5.1</option>
-          <option value="gpt-5-pro">GPT-5 Pro</option>
-          <option value="gpt-5.2">GPT-5.2 (Flagship)</option>
-          <option value="gpt-5.2-pro">GPT-5.2 Pro</option>
+          <option value="gpt-6-astra">GPT-6 Astra (Most Capable)</option>
+          <option value="gpt-5.6-sol">GPT-5.6 Sol (Flagship Reasoning)</option>
+          <option value="gpt-5.6-terra">GPT-5.6 Terra (Balanced)</option>
+          <option value="gpt-5.6-luna">GPT-5.6 Luna (Cheapest)</option>
+          <option value="gpt-5.6-cyber">GPT-5.6 Cyber (Security)</option>
+          <option value="gpt-5.1">GPT-5.1 (Legacy, until Dec 2026)</option>
+          <option value="gpt-5">GPT-5 (Legacy, until Dec 2026)</option>
+          <option value="gpt-4.1">GPT-4.1 (Legacy)</option>
+          <option value="gpt-4.1-mini">GPT-4.1 Mini (Legacy)</option>
           <option value="custom">Custom...</option>
         </select>
-        <input type="text" id="openaiModelCustom" class="hidden" placeholder="e.g. o3" autocomplete="off">
+        <input type="text" id="openaiModelCustom" class="hidden" placeholder="e.g. gpt-6-astra" autocomplete="off">
       </div>
 
       <div id="glmModelGroup" class="hidden">
         <label for="glmModel">GLM Model</label>
         <select id="glmModel">
-          <option value="glm-4-flash">GLM-4 Flash (Free)</option>
-          <option value="glm-4-air">GLM-4 Air</option>
-          <option value="glm-4-plus">GLM-4 Plus</option>
-          <option value="glm-4-long">GLM-4 Long</option>
-          <option value="glm-4-airx">GLM-4 AirX (Ultra Fast)</option>
-          <option value="glm-4v-flash">GLM-4V Flash (Vision)</option>
-          <option value="glm-z1-air">GLM-Z1 Air (Reasoning)</option>
-          <option value="glm-z1-airx">GLM-Z1 AirX (Reasoning)</option>
-          <option value="glm-z1-flashx">GLM-Z1 FlashX (Reasoning)</option>
-          <option value="glm-5">GLM-5</option>
+          <option value="glm-5.3">GLM-5.3 (Flagship, 1M context)</option>
+          <option value="glm-5.2">GLM-5.2 (Recommended)</option>
           <option value="glm-5.1">GLM-5.1</option>
+          <option value="glm-5">GLM-5</option>
+          <option value="glm-5-turbo">GLM-5 Turbo</option>
+          <option value="glm-4.7">GLM-4.7</option>
+          <option value="glm-4.7-flash">GLM-4.7 Flash (Free)</option>
+          <option value="glm-4.7-flashx">GLM-4.7 FlashX (Fast)</option>
+          <option value="glm-4.6">GLM-4.6</option>
+          <option value="glm-4.5-air">GLM-4.5 Air</option>
+          <option value="glm-4.5-flash">GLM-4.5 Flash (Free)</option>
+          <option value="glm-4-flash-250414">GLM-4 Flash (Free, Legacy)</option>
+          <option value="glm-4-long">GLM-4 Long (Legacy, 1M context)</option>
           <option value="custom">Custom...</option>
         </select>
-        <input type="text" id="glmModelCustom" class="hidden" placeholder="e.g. glm-z1-flash" autocomplete="off">
+        <input type="text" id="glmModelCustom" class="hidden" placeholder="e.g. glm-5.3-flash" autocomplete="off">
         <label for="glmEndpoint">GLM Endpoint</label>
         <select id="glmEndpoint">
           <option value="auto">Auto (try China, then international, then coding plan)</option>
@@ -371,46 +370,46 @@
       <div id="geminiModelGroup" class="hidden">
         <label for="geminiModel">Gemini Model</label>
         <select id="geminiModel">
-          <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Cheapest)</option>
-          <option value="gemini-2.5-flash">Gemini 2.5 Flash (Deprecating Oct 2026)</option>
-          <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deprecating Oct 2026)</option>
+          <option value="gemini-3.8-flash">Gemini 3.8 Flash (Newest Stable)</option>
+          <option value="gemini-3.7-flash">Gemini 3.7 Flash (Stable)</option>
+          <option value="gemini-3.6-flash">Gemini 3.6 Flash (Stable)</option>
+          <option value="gemini-3.5-flash">Gemini 3.5 Flash (Stable)</option>
+          <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Cheap)</option>
+          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (Cheapest 3.x)</option>
+          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Most Capable)</option>
           <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
-          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+          <option value="gemini-2.5-pro">Gemini 2.5 Pro (Legacy, deprecating Oct 2026)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (Legacy, deprecating Oct 2026)</option>
+          <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Legacy, deprecating Oct 2026)</option>
           <option value="custom">Custom...</option>
         </select>
-        <input type="text" id="geminiModelCustom" class="hidden" placeholder="e.g. gemini-3-flash-preview-0625" autocomplete="off">
+        <input type="text" id="geminiModelCustom" class="hidden" placeholder="e.g. gemini-3.8-flash" autocomplete="off">
       </div>
 
       <div id="deepseekModelGroup" class="hidden">
         <label for="deepseekModel">DeepSeek Model</label>
         <select id="deepseekModel">
-          <option value="deepseek-v4-flash">DeepSeek V4 Flash (Low Cost)</option>
-          <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
-          <option value="deepseek-chat">DeepSeek Chat (V3.2, Deprecating)</option>
-          <option value="deepseek-reasoner">DeepSeek Reasoner (V3.2, Deprecating)</option>
+          <option value="deepseek-flash">DeepSeek Flash (V4.1, New)</option>
+          <option value="deepseek-v4-pro">DeepSeek V4 Pro (Most Capable, Thinking)</option>
+          <option value="deepseek-v4-flash">DeepSeek V4 Flash (Legacy Alias)</option>
           <option value="custom">Custom...</option>
         </select>
-        <input type="text" id="deepseekModelCustom" class="hidden" placeholder="e.g. deepseek-v4" autocomplete="off">
+        <input type="text" id="deepseekModelCustom" class="hidden" placeholder="e.g. deepseek-v4-pro" autocomplete="off">
       </div>
 
       <div id="qwenModelGroup" class="hidden">
         <label for="qwenModel">Qwen Model</label>
         <select id="qwenModel">
-          <option value="qwen-flash">Qwen Flash (Recommended)</option>
-          <option value="qwen-plus">Qwen Plus (Qwen3)</option>
-          <option value="qwen3-max">Qwen3 Max (Flagship)</option>
-          <option value="qwen-max">Qwen Max</option>
-          <option value="qwen-turbo">Qwen Turbo (Legacy, Use Flash)</option>
-          <option value="qwen-turbo-latest">Qwen Turbo Latest</option>
-          <option value="qwq-plus">QwQ Plus (Reasoning)</option>
-          <option value="qwen-long">Qwen Long (Long Context)</option>
-          <option value="qwen3-235b-a22b">Qwen3 235B (MoE)</option>
-          <option value="qwen3-32b">Qwen3 32B</option>
-          <option value="qwen3-30b-a3b">Qwen3 30B-A3B (MoE)</option>
+          <option value="qwen3.8-max">Qwen3.8 Max (Flagship)</option>
+          <option value="qwen3.8-flash">Qwen3.8 Flash (Fast, Recommended)</option>
+          <option value="qwen3.7-plus">Qwen3.7 Plus (Balanced)</option>
+          <option value="qwen3.6-plus">Qwen3.6 Plus</option>
+          <option value="qwen-plus">Qwen Plus (Legacy Alias)</option>
+          <option value="qwen3-max">Qwen3 Max (Legacy)</option>
+          <option value="qwen-long">Qwen Long (Legacy, Long Context)</option>
           <option value="custom">Custom...</option>
         </select>
-        <input type="text" id="qwenModelCustom" class="hidden" placeholder="e.g. qwen3-max" autocomplete="off">
+        <input type="text" id="qwenModelCustom" class="hidden" placeholder="e.g. qwen3.8-max" autocomplete="off">
       </div>
 
       <div id="backendTokenGroup" class="hidden">
