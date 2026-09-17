@@ -358,6 +358,14 @@
           <option value="custom">Custom...</option>
         </select>
         <input type="text" id="glmModelCustom" class="hidden" placeholder="e.g. glm-z1-flash" autocomplete="off">
+        <label for="glmEndpoint">GLM Endpoint</label>
+        <select id="glmEndpoint">
+          <option value="auto">Auto (try China, then international, then coding plan)</option>
+          <option value="https://open.bigmodel.cn/api/paas/v4/chat/completions">China — open.bigmodel.cn</option>
+          <option value="https://api.z.ai/api/paas/v4/chat/completions">International — api.z.ai</option>
+          <option value="https://open.bigmodel.cn/api/coding/paas/v4/chat/completions">Coding Plan — China</option>
+          <option value="https://api.z.ai/api/coding/paas/v4/chat/completions">Coding Plan — International</option>
+        </select>
       </div>
 
       <div id="geminiModelGroup" class="hidden">

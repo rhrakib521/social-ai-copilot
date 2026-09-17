@@ -14,6 +14,7 @@
   var glmModelGroup = document.getElementById('glmModelGroup');
   var glmModelSelect = document.getElementById('glmModel');
   var glmModelCustom = document.getElementById('glmModelCustom');
+  var glmEndpointSelect = document.getElementById('glmEndpoint');
   var geminiModelGroup = document.getElementById('geminiModelGroup');
   var geminiModelSelect = document.getElementById('geminiModel');
   var geminiModelCustom = document.getElementById('geminiModelCustom');
@@ -214,6 +215,7 @@
 
       if (settings.openaiModel) setModelUI(openaiModelSelect, openaiModelCustom, settings.openaiModel);
       if (settings.glmModel) setModelUI(glmModelSelect, glmModelCustom, settings.glmModel);
+      if (settings.glmEndpoint && glmEndpointSelect) glmEndpointSelect.value = settings.glmEndpoint;
       if (settings.geminiModel) setModelUI(geminiModelSelect, geminiModelCustom, settings.geminiModel);
       if (settings.deepseekModel) setModelUI(deepseekModelSelect, deepseekModelCustom, settings.deepseekModel);
       if (settings.qwenModel) setModelUI(qwenModelSelect, qwenModelCustom, settings.qwenModel);
@@ -390,6 +392,7 @@
       apiKey: apiKeyInput.value,
       openaiModel: getModelValue(openaiModelSelect, openaiModelCustom, 'gpt-4.1-mini'),
       glmModel: getModelValue(glmModelSelect, glmModelCustom, 'glm-5.1'),
+      glmEndpoint: glmEndpointSelect ? glmEndpointSelect.value : 'auto',
       geminiModel: getModelValue(geminiModelSelect, geminiModelCustom, 'gemini-2.5-flash'),
       deepseekModel: getModelValue(deepseekModelSelect, deepseekModelCustom, 'deepseek-chat'),
       qwenModel: getModelValue(qwenModelSelect, qwenModelCustom, 'qwen-plus'),

@@ -192,7 +192,7 @@
     var info = { name: '', handle: '', profileUrl: '' };
     if (!postEl || !platform) return info;
     if (platform === 'linkedin') {
-      var authorEl = postEl.querySelector(
+      var authorEl = querySelectorInPriority(postEl,
         '.update-components-actor__title span[dir="ltr"], ' +
         '.update-components-actor__name, ' +
         'span[class*="actor__title"], ' +
@@ -204,13 +204,13 @@
       if (authorEl) info.name = (authorEl.innerText || authorEl.textContent || '').trim();
       // If still no name, try broader patterns
       if (!info.name) {
-        var fallbackAuthor = postEl.querySelector(
+        var fallbackAuthor = querySelectorInPriority(postEl,
           '.update-components-actor span[dir="ltr"], ' +
           '[data-control-name="actor"] .visually-hidden'
         );
         if (fallbackAuthor) info.name = (fallbackAuthor.innerText || fallbackAuthor.textContent || '').trim();
       }
-      var profileEl = postEl.querySelector(
+      var profileEl = querySelectorInPriority(postEl,
         '.update-components-actor__image a, ' +
         '.update-components-actor__title a, ' +
         'a[class*="actor"][href*="/in/"], ' +
@@ -221,9 +221,9 @@
       if (profileEl) info.profileUrl = profileEl.getAttribute('href') || '';
       if (info.profileUrl && info.profileUrl.charAt(0) === '/') info.profileUrl = window.location.origin + info.profileUrl;
     } else if (platform === 'facebook') {
-      var fbAuthor = postEl.querySelector('a[role="link"] span a span, h4 a span, strong span a, a[aria-label][href]');
+      var fbAuthor = querySelectorInPriority(postEl, 'a[role="link"] span a span, h4 a span, strong span a, a[aria-label][href]');
       if (fbAuthor) info.name = (fbAuthor.innerText || fbAuthor.textContent || '').trim();
-      var fbProfile = postEl.querySelector('h4 a, strong span a, a[href*="/profile.php"], a[href*="facebook.com/"][aria-label]');
+      var fbProfile = querySelectorInPriority(postEl, 'h4 a, strong span a, a[href*="/profile.php"], a[href*="facebook.com/"][aria-label]');
       if (fbProfile) info.profileUrl = fbProfile.getAttribute('href') || '';
     } else if (platform === 'x') {
       var xHandle = postEl.querySelector('[data-testid="User-Name"] a');
@@ -379,7 +379,7 @@
         '[data-id*="urn:li:activity"]'
       ],
       // Selectors that target ONLY the actual post/comment text content area.
-      // Ordered from most-specific to least-specific; the engine tries them in order.
+      // Tried ONE AT A TIME in this priority order (most-specific first).
       // Updated June 2026 to cover the new text-view-model-migration patterns.
       postContentSelector: [
         // New 2026 text view model patterns
@@ -389,8 +389,8 @@
         '.feed-shared-inline-show-more-text',
         '.feed-shared-update-v2__description .break-words',
         // Newer LinkedIn text containers (text-view-model-migration)
-        '.text-view-model',
         '.text-view-model .break-words',
+        '.text-view-model',
         '[data-test-id="share-text"]',
         '[data-test-id="main-feed-activity-card__comment-text"]',
         // Generic attributed text patterns
@@ -398,11 +398,17 @@
         // Broader fallbacks — these may match UI chrome so only used when specific fail
         '.feed-shared-text',
         '.feed-shared-update-v2__commentary',
-        // Comment text patterns
+        // Comment text patterns (only match when postEl IS a comment item)
         '.comments-comment-item__comment-text',
         '.comments-comment-text',
         '.commenting-stub-comment__text-content'
       ].join(', '),
+      // Containers of OTHER comments in the same thread — the only siblings
+      // that qualify as "nearby comments" context. Full posts never do.
+      commentContainers: [
+        '.comments-comments-list__comment-item',
+        '.comments-comment-item'
+      ],
       authorSelector: [
         '.update-components-actor__title span[dir="ltr"]',
         '.update-components-actor__name',
@@ -650,6 +656,23 @@
     return sel ? sel.toString().trim() : '';
   }
 
+  // Query a comma-joined selector list in PRIORITY order: the first selector
+  // that matches wins. querySelector(list) alone returns the first match in
+  // DOCUMENT order, which can be a broader/wrong element.
+  function querySelectorInPriority(el, selectorList) {
+    if (!el || !selectorList) return null;
+    var selectors = String(selectorList).split(',')
+      .map(function (s) { return s.trim(); })
+      .filter(Boolean);
+    for (var i = 0; i < selectors.length; i++) {
+      try {
+        var m = el.querySelector(selectors[i]);
+        if (m) return m;
+      } catch (e) { /* invalid selector — try next */ }
+    }
+    return null;
+  }
+
   function findNearestAncestor(element, selectors, maxDepth) {
     maxDepth = maxDepth || 15;
     var current = element;
@@ -824,14 +847,35 @@
     maxLength = maxLength || 2000;
     if (!postEl) return '';
 
-    // If the platform defines content-specific selectors, use those to get
-    // ONLY the actual text, not the entire post container with all UI noise.
+    // If the platform defines content-specific selectors, try them ONE AT A
+    // TIME in priority order. Querying the whole comma-joined list at once
+    // returns matches in DOCUMENT order — which mixed comments into posts,
+    // duplicated text (a leaf selector AND its broader parent both matched),
+    // and fed the AI a polluted blob instead of the actual post text.
     if (config && config.postContentSelector) {
-      var contentEls = postEl.querySelectorAll(config.postContentSelector);
-      if (contentEls.length > 0) {
+      var selectors = String(config.postContentSelector).split(',')
+        .map(function (s) { return s.trim(); })
+        .filter(Boolean);
+      for (var si = 0; si < selectors.length; si++) {
+        var contentEls;
+        try { contentEls = postEl.querySelectorAll(selectors[si]); }
+        catch (selErr) { continue; }
+        if (!contentEls || contentEls.length === 0) continue;
         var textParts = [];
+        var collected = [];
         for (var i = 0; i < contentEls.length; i++) {
-          var t = (contentEls[i].innerText || contentEls[i].textContent || '').trim();
+          var el = contentEls[i];
+          // Skip elements nested inside an already-collected element
+          var nested = false;
+          for (var ci2 = 0; ci2 < collected.length; ci2++) {
+            if (collected[ci2] !== el && collected[ci2].contains && collected[ci2].contains(el)) {
+              nested = true;
+              break;
+            }
+          }
+          if (nested) continue;
+          collected.push(el);
+          var t = (el.innerText || el.textContent || '').trim();
           if (t && t.length > 3) textParts.push(t);
         }
         if (textParts.length > 0) {
@@ -962,11 +1006,20 @@
     return parts.length > 0 ? parts.join(', ') : '';
   }
 
+  // Selection only counts if it is INSIDE the given element — a selection
+  // elsewhere on the page must not override the post content in the prompt.
+  function getSelectedTextIn(el) {
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return '';
+    var node = sel.anchorNode;
+    if (!node) return '';
+    if (el && el.contains && !el.contains(node) && node !== el) return '';
+    return sel.toString().trim();
+  }
+
   function extractContext(activeEl) {
     var result = { postText: '', author: '', nearbyComments: [], selectedText: '', engagement: null };
     if (!activeEl || !platformConfig) return result;
-
-    result.selectedText = getSelectedText();
 
     var postEl = findNearestAncestor(activeEl, platformConfig.postContainers, 20);
 
@@ -1008,10 +1061,14 @@
     if (!postEl && (platformName === 'linkedin' || platformName === 'facebook')) {
       var liFieldRect = activeEl.getBoundingClientRect();
       var liPostSelector = platformConfig.postSelector || platformConfig.postContainers[0];
-      var liAllPosts = document.querySelectorAll(liPostSelector);
+      // If the field is inside a dialog (LinkedIn opens posts in a modal),
+      // search ONLY inside it — a page-wide search would match the feed post
+      // behind the modal and answer the wrong post.
+      var liSearchRoot = (activeEl.closest && activeEl.closest('[role="dialog"]')) || document;
+      var liAllPosts = liSearchRoot.querySelectorAll(liPostSelector);
       // LinkedIn extra: also query by data-urn attribute for resilient post detection
       if (platformName === 'linkedin') {
-        var urnPosts = document.querySelectorAll('[data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]');
+        var urnPosts = liSearchRoot.querySelectorAll('[data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]');
         // Merge urn-based posts (deduplicate by element)
         var seen = new Set();
         for (var up = 0; up < liAllPosts.length; up++) seen.add(liAllPosts[up]);
@@ -1040,7 +1097,8 @@
     // X fallback: if no ancestor found, find nearest tweet by visual position
     if (!postEl && platformName === 'x') {
       var xFieldRect = activeEl.getBoundingClientRect();
-      var xAllPosts = document.querySelectorAll(platformConfig.postSelector || 'article[data-testid="tweet"]');
+      var xSearchRoot = (activeEl.closest && activeEl.closest('[role="dialog"]')) || document;
+      var xAllPosts = xSearchRoot.querySelectorAll(platformConfig.postSelector || 'article[data-testid="tweet"]');
       var xBestPost = null, xBestDist = Infinity;
       for (var xPi = 0; xPi < xAllPosts.length; xPi++) {
         var xPr = xAllPosts[xPi].getBoundingClientRect();
@@ -1058,11 +1116,12 @@
     }
 
     if (postEl) {
+      result.selectedText = getSelectedTextIn(postEl);
       result.postText = cleanExtractPostText(postEl, platformConfig);
       if (platformConfig.authorSelector) {
-        var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
-        if (authorEls.length > 0) {
-          result.author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
+        var authorEl = querySelectorInPriority(postEl, platformConfig.authorSelector);
+        if (authorEl) {
+          result.author = (authorEl.innerText || authorEl.textContent || '').trim();
         }
       }
       // For shreddit-post, also get author from attributes
@@ -1077,21 +1136,41 @@
       if (fullAuthorInfo.handle) result.authorHandle = fullAuthorInfo.handle;
       if (fullAuthorInfo.profileUrl) result.authorProfileUrl = fullAuthorInfo.profileUrl;
 
+      // Only sibling COMMENT containers are useful context. Matching full
+      // posts here fed OTHER posts' text into the prompt labeled as
+      // "nearby comments" — the AI then answered the wrong post.
+      var commentSels = platformConfig.commentContainers || [];
       var siblings = postEl.parentElement ? postEl.parentElement.children : [];
       var comments = [];
       for (var i = 0; i < siblings.length && comments.length < 5; i++) {
-        if (siblings[i] !== postEl) {
-          for (var j = 0; j < platformConfig.postContainers.length; j++) {
-            if (siblings[i].matches && siblings[i].matches(platformConfig.postContainers[j])) {
-              var ct = extractText(siblings[i], 500);
-              if (ct) comments.push(ct);
-              break;
-            }
+        if (siblings[i] === postEl || !siblings[i].matches) continue;
+        for (var j = 0; j < commentSels.length; j++) {
+          if (siblings[i].matches(commentSels[j])) {
+            var ct = extractText(siblings[i], 500);
+            if (ct) comments.push(ct);
+            break;
           }
         }
       }
       result.nearbyComments = comments;
+
+      // If replying to a COMMENT, include the parent post's text so the AI
+      // sees the full thread, not just the comment in isolation.
+      var isCommentEl = false;
+      for (var cc = 0; cc < commentSels.length; cc++) {
+        if (postEl.matches && postEl.matches(commentSels[cc])) { isCommentEl = true; break; }
+      }
+      if (isCommentEl && platformConfig.postSelector && postEl.closest) {
+        var parentPost = postEl.closest(platformConfig.postSelector);
+        if (parentPost && parentPost !== postEl) {
+          var parentText = cleanExtractPostText(parentPost, platformConfig, 800);
+          if (parentText) {
+            result.postText = parentText + '\n\n— Comment being replied to:\n' + result.postText;
+          }
+        }
+      }
     } else {
+      result.selectedText = getSelectedText();
       var ft = extractText(activeEl, 1000);
       if (ft) result.postText = ft;
     }
@@ -1515,7 +1594,7 @@
         postTimedOut = true;
         resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
         resultCard.className = 'saic-result-card saic-error';
-      }, 60000);
+      }, 90000);
 
       console.log('[SAIC] Sending post generate request');
 
@@ -1631,7 +1710,7 @@
         generateTimedOut = true;
         resultCard.textContent = 'Error: Request timed out. The API took too long to respond. Try a different model or check your API key.';
         resultCard.className = 'saic-result-card saic-error';
-      }, 60000);
+      }, 90000);
 
       var messageData = {
         platform: platformName,
@@ -1747,10 +1826,39 @@
     setupDblClickListener();
 
     // Load settings asynchronously (tone defaults, platform toggle)
-    chrome.runtime.sendMessage({ type: 'getSettings' }, function (settings) {
-      if (chrome.runtime.lastError || !settings) {
+    // Retry once — after an extension reload the orphaned content script's
+    // first message can fail with "Extension context invalidated".
+    var _settingsAttempts = 0;
+    function loadSettings() {
+      var ok = false;
+      try {
+        chrome.runtime.sendMessage({ type: 'getSettings' }, function (settings) {
+          if (chrome.runtime.lastError || !settings) {
+            console.error('[SAIC] getSettings failed:', chrome.runtime.lastError && chrome.runtime.lastError.message);
+            retryOrFail();
+            return;
+          }
+          ok = true;
+          initWithSettings(settings);
+        });
+      } catch (e) {
+        console.error('[SAIC] getSettings threw:', e.message);
+        retryOrFail();
         return;
       }
+      // If the callback never ran synchronously and the port died, retry
+      function retryOrFail() {
+        if (ok) return;
+        _settingsAttempts++;
+        if (_settingsAttempts < 3) {
+          setTimeout(loadSettings, 1000 * _settingsAttempts);
+        } else {
+          console.error('[SAIC] Could not load settings after retries — automation panel not initialized. Reload the page or the extension.');
+        }
+      }
+    }
+
+    function initWithSettings(settings) {
       var platforms = settings.platforms || {};
       if (platforms[platformName] === false) {
         // Platform disabled — remove listener
@@ -1777,7 +1885,8 @@
             hasPendingAction = true;
             // Auto-start the engine to resume on tweet detail page
             AutomationEngine.state = 'running';
-            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+            // Restore carried stats (keeps commentsMade counting toward stop limits)
+            AutomationEngine.stats = pendingAction.stats || { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
             AutomationEngine.processedPosts = new Set();
             if (pendingAction.fingerprint) {
               AutomationEngine.processedPosts.add(pendingAction.fingerprint);
@@ -1803,7 +1912,8 @@
           if (pendingAction && pendingAction.text) {
             hasPendingAction = true;
             AutomationEngine.state = 'running';
-            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
+            // Restore carried stats (keeps commentsMade counting toward stop limits)
+            AutomationEngine.stats = pendingAction.stats || { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
             AutomationEngine.processedPosts = new Set();
             AutomationEngine._abortScroll = false;
             AutomationEngine.logEntries = [];
@@ -1850,23 +1960,9 @@
       if (platformName !== 'x' && platformName !== 'reddit') {
         checkRestoreState();
       }
-      if (platformName === 'reddit') {
-        RedditAutoEngine.loadConfig();
-        RedditAutoEngine.loadPendingAction(function (pendingAction) {
-          if (pendingAction && pendingAction.text) {
-            // Auto-start the engine to resume
-            AutomationEngine.state = 'running';
-            AutomationEngine.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
-            AutomationEngine.processedPosts = new Set();
-            AutomationEngine._abortScroll = false;
-            AutomationEngine.logEntries = [];
-            AutomationEngine.addLog('Resuming on comments page');
-            AutomationEngine.updateUI();
-            RedditAutoEngine.resumeOnCommentsPage(pendingAction);
-          }
-        });
-      }
-    });
+    }
+
+    loadSettings();
 
     // Keep settings fresh on changes
     chrome.storage.onChanged.addListener(function (changes) {
@@ -1912,25 +2008,50 @@
     '};'
   ].join('\n');
   var _bgTimerBlob = new Blob([_bgTimerCode], { type: 'application/javascript' });
-  var _bgTimerWorker = new Worker(URL.createObjectURL(_bgTimerBlob));
+  var _bgTimerWorker = null;
+  try {
+    _bgTimerWorker = new Worker(URL.createObjectURL(_bgTimerBlob));
+  } catch (e) {
+    // Page CSP can block blob workers created by content scripts — fall back to
+    // plain setTimeout (throttled in background tabs, but functional).
+    console.error('[SAIC] Web Worker timer unavailable, falling back to setTimeout:', e.message);
+  }
   var _bgTimerCbs = {};
   var _bgTimerSeq = 0;
+  var _bgTimerFallbacks = {};
 
   function bgTimeout(fn, ms) {
     var id = ++_bgTimerSeq;
     _bgTimerCbs[id] = fn;
-    _bgTimerWorker.postMessage({ cmd: 'set', id: id, ms: ms });
+    if (_bgTimerWorker) {
+      _bgTimerWorker.postMessage({ cmd: 'set', id: id, ms: ms });
+    } else {
+      _bgTimerFallbacks[id] = setTimeout(function () {
+        var cb = _bgTimerCbs[id];
+        delete _bgTimerCbs[id];
+        if (cb) cb();
+      }, ms);
+    }
     return id;
   }
 
   function bgClear(id) {
-    if (id) { delete _bgTimerCbs[id]; _bgTimerWorker.postMessage({ cmd: 'clear', id: id }); }
+    if (!id) return;
+    delete _bgTimerCbs[id];
+    if (_bgTimerWorker) {
+      _bgTimerWorker.postMessage({ cmd: 'clear', id: id });
+    } else if (_bgTimerFallbacks[id] !== undefined) {
+      clearTimeout(_bgTimerFallbacks[id]);
+      delete _bgTimerFallbacks[id];
+    }
   }
 
-  _bgTimerWorker.onmessage = function (e) {
-    var cb = _bgTimerCbs[e.data.id];
-    if (cb) { delete _bgTimerCbs[e.data.id]; cb(); }
-  };
+  if (_bgTimerWorker) {
+    _bgTimerWorker.onmessage = function (e) {
+      var cb = _bgTimerCbs[e.data.id];
+      if (cb) { delete _bgTimerCbs[e.data.id]; cb(); }
+    };
+  }
 
   // ══════════════════════════════════════════════════
   // ── Automation Engine ──
@@ -2474,22 +2595,24 @@
           author += ' (@' + authorInfo.handle + ')';
         }
       } else if (platformConfig.authorSelector) {
-        var authorEls = postEl.querySelectorAll(platformConfig.authorSelector);
-        if (authorEls.length > 0) author = (authorEls[0].innerText || authorEls[0].textContent || '').trim();
+        var authorEl = querySelectorInPriority(postEl, platformConfig.authorSelector);
+        if (authorEl) author = (authorEl.innerText || authorEl.textContent || '').trim();
       }
       // Extract engagement metrics for the AI to use
       var engagement = extractEngagement(postEl);
       var engagementStr = formatEngagement(engagement);
+      // Only sibling COMMENT containers qualify as nearby context — full posts
+      // here would feed OTHER posts' text into the prompt as "comments".
+      var commentSels = platformConfig.commentContainers || [];
       var siblings = postEl.parentElement ? postEl.parentElement.children : [];
       var comments = [];
       for (var i = 0; i < siblings.length && comments.length < 5; i++) {
-        if (siblings[i] !== postEl) {
-          for (var j = 0; j < platformConfig.postContainers.length; j++) {
-            if (siblings[i].matches && siblings[i].matches(platformConfig.postContainers[j])) {
-              var ct = extractText(siblings[i], 500);
-              if (ct) comments.push(ct);
-              break;
-            }
+        if (siblings[i] === postEl || !siblings[i].matches) continue;
+        for (var j = 0; j < commentSels.length; j++) {
+          if (siblings[i].matches(commentSels[j])) {
+            var ct = extractText(siblings[i], 500);
+            if (ct) comments.push(ct);
+            break;
           }
         }
       }
@@ -2686,6 +2809,15 @@
                 } else {
                   var r3 = allCandidates[k].getBoundingClientRect();
                   if (r3.width > 0 && r3.height > 0) {
+                    // X's inline-reply modal is position:fixed and viewport-centered —
+                    // for tall tweets it sits ABOVE the tweet, outside the dy window
+                    // below. A visible field inside an open dialog IS the compose.
+                    var inDialog = !!allCandidates[k].closest('[role="dialog"]');
+                    if (inDialog && bestDist > 0) {
+                      bestDist = 0;
+                      field = allCandidates[k];
+                      continue;
+                    }
                     var dy3 = r3.top - postRect.bottom;
                     var dx = Math.abs(r3.left - postRect.left);
                     // Wider vertical range for X.com (compose area can be further away)
@@ -3418,8 +3550,8 @@
               if (self.isElVisible(btn)) {
                 humanMouseMove(btn, function () {
                   btn.click();
-                  console.log('[SAIC-Auto] X force-submitted');
-                  callback(true);
+                  console.log('[SAIC-Auto] X force-clicked submit — verifying it went through');
+                  verifySubmitOutcome(true);
                 });
                 return;
               }
@@ -3431,9 +3563,45 @@
         if (!self.isElVisible(btn)) { console.log('[SAIC-Auto] Submit not visible'); callback(false); return; }
         humanMouseMove(btn, function () {
           btn.click();
-          console.log('[SAIC-Auto] Submitted');
-          callback(true);
+          console.log('[SAIC-Auto] Submit clicked — verifying it went through');
+          verifySubmitOutcome(false);
         });
+      }
+
+      // A dispatched click can be a silent no-op (disabled button, blocked
+      // event). Only report success when the compose actually cleared/closed.
+      function verifySubmitOutcome(wasForced) {
+        var verifyAttempts = 0;
+        var maxVerify = platformName === 'x' ? 10 : 6;
+        function checkVerify() {
+          verifyAttempts++;
+          var gone = !replyField.isConnected;
+          var cleared = gone || !(replyField.textContent || '').trim();
+          if (cleared) {
+            console.log('[SAIC-Auto] Submit verified (compose cleared) after ' + verifyAttempts + ' checks' + (wasForced ? ' (forced)' : ''));
+            callback(true);
+            return;
+          }
+          if (verifyAttempts < maxVerify) {
+            bgTimeout(checkVerify, 500);
+            return;
+          }
+          // Still has text — the click did not submit. For a forced click on a
+          // genuinely-disabled button this is the expected no-op case.
+          console.log('[SAIC-Auto] Submit NOT verified — compose still has text' + (wasForced ? ' (forced click rejected)' : ''));
+          // One retry with a fresh click if the button is enabled now
+          if (wasForced && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true' && self.isElVisible(btn) && btn.isConnected) {
+            console.log('[SAIC-Auto] Button enabled now — retrying click once');
+            humanMouseMove(btn, function () {
+              btn.click();
+              verifyAttempts = 0;
+              checkVerify();
+            });
+            return;
+          }
+          callback(false);
+        }
+        checkVerify();
       }
       trySubmit();
     },
@@ -3967,6 +4135,7 @@
     // Save pending action to survive page navigation
     savePendingAction: function (action) {
       try {
+        action.timestamp = Date.now();
         chrome.storage.local.set({ saic_xPending: action });
       } catch (e) { /* ignore */ }
     },
@@ -3976,7 +4145,15 @@
         chrome.storage.local.get('saic_xPending', function (result) {
           if (result && result.saic_xPending) {
             chrome.storage.local.remove('saic_xPending');
-            callback(result.saic_xPending);
+            var saved = result.saic_xPending;
+            // Drop stale actions — otherwise an old pending action silently
+            // force-starts the engine on whatever page loads next.
+            if (saved.timestamp && Date.now() - saved.timestamp > 180000) {
+              console.log('[SAIC-X] Dropping stale pending action (' + Math.round((Date.now() - saved.timestamp) / 1000) + 's old)');
+              callback(null);
+              return;
+            }
+            callback(saved);
           } else {
             callback(null);
           }
@@ -4005,12 +4182,15 @@
       // Extract tweet context BEFORE navigating (the DOM will be gone after)
       var context = AutomationEngine.extractPostContext(postEl);
 
-      // Save pending action with the context so we can comment after page loads
+      // Save pending action with the context so we can comment after page loads.
+      // Carry stats so the resume path doesn't reset commentsMade — otherwise
+      // a configured stop limit can never trigger.
       self.savePendingAction({
         tweetLink: tweetLink,
         context: context,
         fingerprint: postId,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        stats: AutomationEngine.stats
       });
 
       // Save engine state so it resumes after history.back() returns to feed
@@ -4171,6 +4351,24 @@
       var self = this;
       if (AutomationEngine.state !== 'running') { callback(false); return; }
 
+      // If the tab is backgrounded, activate it FIRST — spoofing document.hidden
+      // alone doesn't make the browser paint, so execCommand insertions fail.
+      if (document.hidden && !self._activatedForDetail) {
+        self._activatedForDetail = true;
+        try { chrome.runtime.sendMessage({ type: 'activateTab' }); } catch (e) {}
+        var visTries = 0;
+        (function waitForVisible() {
+          visTries++;
+          if (!document.hidden || visTries > 20) {
+            self.submitCommentOnDetail(tweetEl, text, callback); // re-enter once visible
+          } else {
+            bgTimeout(waitForVisible, 100);
+          }
+        })();
+        return;
+      }
+      self._activatedForDetail = false;
+
       // Spoof visibility so Draft.js processes focus/input events in background tabs
       var wasHidden = document.hidden;
       if (wasHidden) AutomationEngine._spoofVisibility();
@@ -4218,7 +4416,17 @@
           var existing = document.querySelector(selectors[s].trim());
           if (existing) {
             if (AutomationEngine.isElVisible(existing)) {
-              // Found an open reply field — use it directly
+              // Found an open reply field — clear any stale draft left by a
+              // previous failed attempt (X persists reply drafts), then use it.
+              var stale = (existing.textContent || '').trim();
+              if (stale.length > 0) {
+                console.log('[SAIC-X] Clearing stale draft (' + stale.length + ' chars) before typing');
+                try {
+                  existing.focus();
+                  document.execCommand('selectAll', false, null);
+                  document.execCommand('delete', false, null);
+                } catch (e) { /* ignore */ }
+              }
               callback(existing);
               return;
             }
@@ -4226,11 +4434,13 @@
         }
       }
 
-      // No open reply field — click the reply button on the main tweet
-      var replyBtn = tweetEl.querySelector('[data-testid="reply"]');
+      // No open reply field — click the reply button on the main tweet.
+      // [data-testid="reply"] is sometimes a wrapper DIV around the button —
+      // prefer the inner button so the click reaches the actual handler.
+      var replyBtn = tweetEl.querySelector('[data-testid="reply"] button') || tweetEl.querySelector('[data-testid="reply"]');
       if (!replyBtn) {
         // Try the first reply button on the page
-        replyBtn = document.querySelector('[data-testid="reply"]');
+        replyBtn = document.querySelector('[data-testid="reply"] button') || document.querySelector('[data-testid="reply"]');
       }
       if (!replyBtn) {
         AutomationEngine.addLog('No reply button found');
@@ -4701,7 +4911,14 @@
     // Persist pending Reddit comment action so it survives page navigation
     savePendingAction: function (action) {
       try {
+        action.timestamp = Date.now();
         chrome.storage.local.set({ saic_redditPending: action });
+      } catch (e) { /* ignore */ }
+    },
+
+    clearPendingAction: function () {
+      try {
+        chrome.storage.local.remove('saic_redditPending');
       } catch (e) { /* ignore */ }
     },
 
@@ -4710,12 +4927,41 @@
         chrome.storage.local.get('saic_redditPending', function (result) {
           if (result && result.saic_redditPending) {
             chrome.storage.local.remove('saic_redditPending');
-            callback(result.saic_redditPending);
+            // Drop stale actions — otherwise an old pending action silently
+            // force-starts the engine on whatever page loads next.
+            var saved = result.saic_redditPending;
+            if (saved.timestamp && Date.now() - saved.timestamp > 180000) {
+              console.log('[SAIC-Reddit] Dropping stale pending action (' + Math.round((Date.now() - saved.timestamp) / 1000) + 's old)');
+              callback(null);
+              return;
+            }
+            callback(saved);
           } else {
             callback(null);
           }
         });
       } catch (e) { callback(null); }
+    },
+
+    // Activate a shreddit comment composer by clicking the real trigger inside
+    // its (possibly nested) shadow DOM. Clicking the host element does NOT
+    // propagate into the shadow tree, and the first random wrapper div is not
+    // the trigger — pierce recursively for a meaningful target instead.
+    activateComposer: function (composer) {
+      try { composer.click(); } catch (e) {}
+      if (!composer.shadowRoot) return;
+      var targets = querySelectorAllDeepRecursive(composer, '[contenteditable="true"], [role="textbox"], textarea', 5);
+      if (targets.length > 0) {
+        try { targets[0].click(); targets[0].focus && targets[0].focus(); } catch (e) {}
+        return;
+      }
+      var clickables = querySelectorAllDeepRecursive(composer, '[role="button"], button', 5);
+      if (clickables.length > 0) {
+        try { clickables[0].click(); } catch (e) {}
+        return;
+      }
+      var anyShadowEl = composer.shadowRoot.querySelector('div, p, span');
+      if (anyShadowEl) { try { anyShadowEl.click(); } catch (e) {} }
     },
 
     // Resume automation on a Reddit comments page after navigating from feed
@@ -4730,6 +4976,7 @@
       if (!postEl) {
         AutomationEngine.addLog('No post found on comments page');
         // Navigate back to feed so automation can continue
+        AutomationEngine.saveState();
         window.location.href = 'https://www.reddit.com/';
         return;
       }
@@ -4748,11 +4995,7 @@
             var cRect = composer.getBoundingClientRect();
             if (cRect.width > 0 && cRect.height > 0) {
               AutomationEngine.addLog('Activating comment composer...');
-              composer.click();
-              if (composer.shadowRoot) {
-                var shadowClick = composer.shadowRoot.querySelector('div, p, span, [role="button"]');
-                if (shadowClick) shadowClick.click();
-              }
+              self.activateComposer(composer);
               break;
             }
           }
@@ -4774,6 +5017,7 @@
               if (!replyField) {
                 AutomationEngine.addLog('No reply field on comments page, going back to feed');
                 // Navigate back to feed instead of getting stuck
+                AutomationEngine.saveState();
                 bgTimeout(function () {
                   var subPath = pendingAction.subreddit ? '/r/' + pendingAction.subreddit : '/';
                   window.location.href = 'https://www.reddit.com' + subPath;
@@ -4858,14 +5102,9 @@
           var composer = composerEls[ce];
           var composerRect = composer.getBoundingClientRect();
           if (composerRect.width > 0 && composerRect.height > 0) {
-            // Click the composer to activate it
+            // Click the composer to activate it (pierces nested shadow roots)
             AutomationEngine.addLog('Clicking comment composer to activate...');
-            composer.click();
-            // Also try clicking inside shadow root if available
-            if (composer.shadowRoot) {
-              var shadowClickable = composer.shadowRoot.querySelector('div, p, span, [role="button"]');
-              if (shadowClickable) shadowClickable.click();
-            }
+            self.activateComposer(composer);
             // Wait for textarea to appear after activation
             var activateAttempts = 0;
             var findActivatedField = function () {
@@ -4948,12 +5187,14 @@
       for (var ci = 0; ci < composerSelectors.length; ci++) {
         var composers = document.querySelectorAll(composerSelectors[ci]);
         for (var cj = 0; cj < composers.length; cj++) {
-          // Look inside the composer for the actual textarea/field
-          var innerField = composers[cj].querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+          // The editor on shreddit sits behind NESTED shadow roots
+          // (shreddit-comment-composer → faceplate-rich-text-editor → contenteditable),
+          // so a one-level shadowRoot query never reaches it — pierce recursively.
+          var innerField = querySelectorDeepRecursive(composers[cj], 'textarea, [contenteditable="true"], [role="textbox"]', 5);
           if (innerField) {
             if (isBg || innerField.getBoundingClientRect().width > 0) return innerField;
           }
-          // Check shadow root
+          // Fallback: one-level shadow root query
           if (composers[cj].shadowRoot) {
             innerField = composers[cj].shadowRoot.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
             if (innerField) {
@@ -4971,10 +5212,10 @@
         var candidates = searchRoot.querySelectorAll(replySelector);
         var bestDist = Infinity;
         for (var j = 0; j < candidates.length; j++) {
-          // Pierce shadow roots of candidates
+          // Pierce shadow roots of candidates (recursively — nested hosts exist)
           var actualField = candidates[j];
           if (actualField.tagName && actualField.tagName.toLowerCase() === 'faceplate-textarea' && actualField.shadowRoot) {
-            var inner = actualField.shadowRoot.querySelector('textarea');
+            var inner = querySelectorDeepRecursive(actualField, 'textarea, [contenteditable="true"]', 3);
             if (inner) actualField = inner;
           }
           if (isBg) {
@@ -5005,7 +5246,7 @@
       for (var k = 0; k < allFields.length; k++) {
         var actualField2 = allFields[k];
         if (actualField2.tagName && actualField2.tagName.toLowerCase() === 'faceplate-textarea' && actualField2.shadowRoot) {
-          var inner2 = actualField2.shadowRoot.querySelector('textarea');
+          var inner2 = querySelectorDeepRecursive(actualField2, 'textarea, [contenteditable="true"]', 3);
           if (inner2) actualField2 = inner2;
         }
         if (isBg) {
@@ -5037,14 +5278,19 @@
       // For feed pages, save pending action and navigate to comments
       var pageType = self.getRedditPageType();
       if (pageType === 'feed') {
-        // Persist the comment text and subreddit so we can resume after navigation
-        self.savePendingAction({ text: text, subreddit: subreddit, timestamp: Date.now() });
+        // Persist the comment text and subreddit so we can resume after navigation.
+        // Carry stats so the resume path doesn't reset commentsMade — otherwise
+        // a configured stop limit can never trigger.
+        self.savePendingAction({ text: text, subreddit: subreddit, stats: AutomationEngine.stats });
         AutomationEngine.addLog('Navigating to comments page...');
 
         // Find the comments link and navigate
         self.clickRedditCommentButton(postEl, function (replyField) {
           if (!replyField) {
-            // clickRedditCommentButton may have navigated — that's fine, pending action saved
+            // No field AND no navigation happened (navigation returns without
+            // calling back) — clear the pending action so it can't poison the
+            // next page load into force-starting on the wrong post.
+            self.clearPendingAction();
             callback(false);
             return;
           }
@@ -5171,6 +5417,13 @@
           var maxSubmitAttempts = 8;
           function tryRedditSubmit() {
             submitAttempts++;
+            // Lit re-renders the composer during input — a detached button node
+            // would "click" as a silent no-op.
+            if (!btn.isConnected) {
+              console.log('[SAIC-Reddit] Submit button detached from DOM');
+              callback(false);
+              return;
+            }
             if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
               if (submitAttempts < maxSubmitAttempts) {
                 bgTimeout(tryRedditSubmit, 400);
@@ -5182,8 +5435,23 @@
             }
             humanMouseMove(btn, function () {
               self.redditClick(btn, function () {
-                console.log('[SAIC-Reddit] Submitted');
-                callback(true);
+                console.log('[SAIC-Reddit] Submit clicked — verifying');
+                // Verify the composer actually cleared/closed (Reddit closes
+                // it after a successful submit).
+                var vAttempts = 0;
+                (function checkRedditSubmitted() {
+                  vAttempts++;
+                  var gone = !replyField.isConnected;
+                  var val = replyField.value !== undefined ? String(replyField.value) : (replyField.textContent || '');
+                  if (gone || !val.trim()) {
+                    console.log('[SAIC-Reddit] Submit verified after ' + vAttempts + ' checks');
+                    callback(true);
+                    return;
+                  }
+                  if (vAttempts < 8) { bgTimeout(checkRedditSubmitted, 500); return; }
+                  console.log('[SAIC-Reddit] Submit NOT verified — field still has text');
+                  callback(false);
+                })();
               });
             });
           }
@@ -5215,6 +5483,9 @@
       if (pageType === 'comments') {
         var delay = self.getRedditDelay();
         AutomationEngine.addLog('Navigating back to feed...');
+        // Persist running state so the engine resumes on the feed page —
+        // without this the bot silently dies after every comments-page visit.
+        AutomationEngine.saveState();
         bgTimeout(function () {
           // Navigate back to the subreddit feed or home feed
           var subPath = subreddit ? '/r/' + subreddit : '/';

@@ -54,10 +54,86 @@ async function generateGLMToken(apiKey) {
 
 // ── Provider implementations (inlined for MV3 service worker) ──
 
+function extractChatText(data, providerLabel) {
+  if (!data || !data.choices || data.choices.length === 0) {
+    throw new Error((providerLabel || 'API') + ' returned no choices.');
+  }
+  var msg = data.choices[0].message || {};
+  var content = msg.content;
+  if (Array.isArray(content)) {
+    content = content.map(function (part) {
+      if (!part) return '';
+      if (typeof part === 'string') return part;
+      return part.text || part.content || '';
+    }).join('');
+  }
+  if (content && String(content).trim()) {
+    return String(content).trim();
+  }
+  // Do NOT fall back to reasoning_content — posting the model's internal
+  // monologue as a comment is worse than failing. Empty final content means
+  // the token budget was consumed by reasoning.
+  throw new Error((providerLabel || 'API') + ' returned empty content — the reasoning used up the token budget. Try a non-reasoning model or raise the token limit.');
+}
+
+function isOpenAIReasoningModel(model) {
+  var m = (model || '').toLowerCase();
+  return m.indexOf('gpt-5') === 0 || /^o[0-9]/.test(m);
+}
+
+function glmThinkingCanDisable(model) {
+  var m = (model || '').toLowerCase();
+  if (m.indexOf('glm-5.3') === 0) return false;
+  return m.indexOf('glm-5') === 0 ||
+    m.indexOf('glm-4.5') === 0 ||
+    m.indexOf('glm-4.6') === 0 ||
+    m.indexOf('glm-4.7') === 0 ||
+    m.indexOf('glm-z1') === 0;
+}
+
+function glmEndpointCandidates(preferred) {
+  var all = [
+    'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    'https://api.z.ai/api/paas/v4/chat/completions',
+    'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
+    'https://api.z.ai/api/coding/paas/v4/chat/completions'
+  ];
+  if (preferred && preferred !== 'auto') {
+    return [preferred].concat(all.filter(function (url) { return url !== preferred; }));
+  }
+  return all;
+}
+
+function shouldRetryGlmEndpoint(status, errorBody) {
+  if (status === 401 || status === 403 || status === 404) return true;
+  var body = (errorBody || '').toLowerCase();
+  return body.indexOf('1220') !== -1 ||
+    body.indexOf('1211') !== -1 ||
+    body.indexOf('1214') !== -1 ||
+    body.indexOf('no permission') !== -1 ||
+    body.indexOf('model not found') !== -1 ||
+    body.indexOf('not have permission') !== -1;
+}
+
 async function callOpenAI(messages, options) {
   var apiKey = options.apiKey;
   var model = options.openaiModel || 'gpt-4o-mini';
   var maxTokens = options.maxTokens || 300;
+
+  var reasoning = isOpenAIReasoningModel(model);
+  var body = {
+    model: model,
+    messages: messages
+  };
+  if (reasoning) {
+    // Reasoning models (gpt-5*, o*) reject any temperature except 1,
+    // and reasoning tokens count against max_completion_tokens — without
+    // headroom the answer comes back empty.
+    body.max_completion_tokens = Math.max(maxTokens, 2000);
+  } else {
+    body.temperature = 0.7;
+    body.max_tokens = maxTokens;
+  }
 
   var response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -65,12 +141,7 @@ async function callOpenAI(messages, options) {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ' + apiKey
     },
-    body: JSON.stringify({
-      model: model,
-      messages: messages,
-      max_tokens: maxTokens,
-      temperature: 0.7
-    })
+    body: JSON.stringify(body)
   }, 60000);
 
   if (!response.ok) {
@@ -78,11 +149,7 @@ async function callOpenAI(messages, options) {
     throw new Error('OpenAI API error (' + response.status + '): ' + errorBody);
   }
 
-  var data = await response.json();
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error('OpenAI API returned no choices.');
-  }
-  return data.choices[0].message.content.trim();
+  return extractChatText(await response.json(), 'OpenAI API');
 }
 
 function sleep(ms) {
@@ -109,57 +176,89 @@ async function callGLM(messages, options) {
   var apiKey = options.apiKey;
   var model = options.glmModel || 'glm-5.1';
   var maxTokens = options.maxTokens || 300;
-
-  // Generate JWT token for id.secret format keys, or use key directly.
-  // The API accepts BOTH raw API key and JWT token as Bearer tokens.
-  var token = await generateGLMToken(apiKey);
-  var authHeader = 'Bearer ' + token;
-
-  var maxRetries = 3;
-  for (var attempt = 0; attempt <= maxRetries; attempt++) {
-    var response = await fetchWithTimeout('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': authHeader,
-        'x-source-channel': 'chrome-extension'
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: messages,
-        max_tokens: maxTokens,
-        temperature: 0.7
-      })
-    }, 60000);
-
-    if (response.status === 429 && attempt < maxRetries) {
-      // Rate limited — wait with exponential backoff (2s, 4s, 8s)
-      var waitMs = 2000 * Math.pow(2, attempt);
-      await sleep(waitMs);
-      // Regenerate token since it may have expired during wait
-      token = await generateGLMToken(apiKey);
-      authHeader = 'Bearer ' + token;
-      continue;
-    }
-
-    if (!response.ok) {
-      var errorBody = await response.text();
-      throw new Error('GLM API error (' + response.status + '): ' + errorBody);
-    }
-
-    var data = await response.json();
-    if (!data.choices || data.choices.length === 0) {
-      throw new Error('GLM API returned no choices.');
-    }
-    return data.choices[0].message.content.trim();
+  var thinkingDisabled = glmThinkingCanDisable(model);
+  if (!thinkingDisabled && (model || '').toLowerCase().indexOf('glm-5.3') === 0) {
+    // glm-5.3 cannot disable thinking — without a large budget the reasoning
+    // consumes everything and message.content comes back empty.
+    maxTokens = Math.max(maxTokens, 3072);
   }
-  throw new Error('GLM API rate limited after ' + maxRetries + ' retries. Please try again.');
+
+  var requestBody = {
+    model: model,
+    messages: messages,
+    max_tokens: maxTokens,
+    temperature: 0.7
+  };
+  // GLM-5.x defaults to thinking, which consumes the token budget and leaves
+  // message.content empty — so comments never appear.
+  if (thinkingDisabled) {
+    requestBody.thinking = { type: 'disabled' };
+  }
+
+  var endpoints = glmEndpointCandidates(options.glmEndpoint);
+  var lastError = null;
+  var autoProbe = !options.glmEndpoint || options.glmEndpoint === 'auto';
+
+  for (var e = 0; e < endpoints.length; e++) {
+    var endpoint = endpoints[e];
+    var token = await generateGLMToken(apiKey);
+    var authHeader = 'Bearer ' + token;
+    var timeoutMs = autoProbe && endpoints.length > 1 ? 12000 : 60000;
+    var maxRetries = 3;
+
+    try {
+      for (var attempt = 0; attempt <= maxRetries; attempt++) {
+        var response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': authHeader,
+            'x-source-channel': 'chrome-extension'
+          },
+          body: JSON.stringify(requestBody)
+        }, timeoutMs);
+
+        if (response.status === 429 && attempt < maxRetries) {
+          var waitMs = 2000 * Math.pow(2, attempt);
+          await sleep(waitMs);
+          token = await generateGLMToken(apiKey);
+          authHeader = 'Bearer ' + token;
+          continue;
+        }
+
+        if (!response.ok) {
+          var errorBody = await response.text();
+          if (autoProbe && shouldRetryGlmEndpoint(response.status, errorBody) && e < endpoints.length - 1) {
+            lastError = new Error('GLM API error (' + response.status + ') at ' + endpoint + ': ' + errorBody);
+            break;
+          }
+          throw new Error('GLM API error (' + response.status + '): ' + errorBody);
+        }
+
+        return extractChatText(await response.json(), 'GLM API');
+      }
+      if (lastError && e < endpoints.length - 1) continue;
+    } catch (err) {
+      lastError = err;
+      var msg = (err && err.message) || '';
+      var isTimeout = msg.indexOf('timed out') !== -1 || msg.indexOf('Failed to fetch') !== -1 || err.name === 'TypeError';
+      if (autoProbe && isTimeout && e < endpoints.length - 1) continue;
+      if (autoProbe && e < endpoints.length - 1 && shouldRetryGlmEndpoint(0, msg)) continue;
+      throw err;
+    }
+  }
+  throw lastError || new Error('GLM API rate limited after retries. Please try again.');
 }
 
 async function callGemini(messages, options) {
   var apiKey = options.apiKey;
   var model = options.geminiModel || 'gemini-2.5-flash';
   var maxTokens = options.maxTokens || 300;
+  // gemini-2.5+/3* think by default and reasoning counts against maxOutputTokens —
+  // a 200-token budget comes back with an empty answer.
+  if (/gemini-(2\.5|[3-9])/i.test(model || '')) {
+    maxTokens = Math.max(maxTokens, 1500);
+  }
 
   var response = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
@@ -180,21 +279,19 @@ async function callGemini(messages, options) {
     throw new Error('Gemini API error (' + response.status + '): ' + errorBody);
   }
 
-  var data = await response.json();
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error('Gemini API returned no choices.');
-  }
-  var content = data.choices[0].message && data.choices[0].message.content;
-  if (!content) {
-    throw new Error('Gemini API returned empty content. Model "' + model + '" may not be available or the response format changed.');
-  }
-  return content.trim();
+  return extractChatText(await response.json(), 'Gemini API');
 }
 
 async function callDeepSeek(messages, options) {
   var apiKey = options.apiKey;
   var model = options.deepseekModel || 'deepseek-chat';
   var maxTokens = options.maxTokens || 300;
+  // Reasoning models: reasoning counts against max_tokens — without headroom
+  // the answer comes back empty.
+  var deepseekReasoning = /reasoner|deepseek-r1/i.test(model || '');
+  if (deepseekReasoning) {
+    maxTokens = Math.max(maxTokens, 2000);
+  }
 
   var response = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -206,7 +303,7 @@ async function callDeepSeek(messages, options) {
       model: model,
       messages: messages,
       max_tokens: maxTokens,
-      temperature: 0.7
+      temperature: deepseekReasoning ? 1 : 0.7
     })
   }, 60000);
 
@@ -215,11 +312,7 @@ async function callDeepSeek(messages, options) {
     throw new Error('DeepSeek API error (' + response.status + '): ' + errorBody);
   }
 
-  var data = await response.json();
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error('DeepSeek API returned no choices.');
-  }
-  return data.choices[0].message.content.trim();
+  return extractChatText(await response.json(), 'DeepSeek API');
 }
 
 async function callQwen(messages, options) {
@@ -246,11 +339,7 @@ async function callQwen(messages, options) {
     throw new Error('Qwen API error (' + response.status + '): ' + errorBody);
   }
 
-  var data = await response.json();
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error('Qwen API returned no choices.');
-  }
-  return data.choices[0].message.content.trim();
+  return extractChatText(await response.json(), 'Qwen API');
 }
 
 async function callBackendProxy(messages, options) {
@@ -497,6 +586,7 @@ var DEFAULT_SETTINGS = {
   apiKey: '',
   openaiModel: 'gpt-4.1-mini',
   glmModel: 'glm-5.1',
+  glmEndpoint: 'auto',
   geminiModel: 'gemini-2.5-flash',
   deepseekModel: 'deepseek-v4-flash',
   qwenModel: 'qwen-plus',
@@ -638,6 +728,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           apiKey: settings.apiKey,
           openaiModel: settings.openaiModel,
           glmModel: settings.glmModel,
+          glmEndpoint: settings.glmEndpoint,
           geminiModel: settings.geminiModel,
           deepseekModel: settings.deepseekModel,
           qwenModel: settings.qwenModel,
