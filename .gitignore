@@ -1,1 +1,4 @@
 node_modules/
+
+# live-test artifacts (screenshots)
+test/*.png

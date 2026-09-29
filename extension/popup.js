@@ -390,12 +390,13 @@
     var data = {
       provider: providerSelect.value,
       apiKey: apiKeyInput.value,
-      openaiModel: getModelValue(openaiModelSelect, openaiModelCustom, 'gpt-4.1-mini'),
-      glmModel: getModelValue(glmModelSelect, glmModelCustom, 'glm-5.1'),
+      // Fallback defaults match background.js DEFAULT_SETTINGS (Sept 2026 lineup)
+      openaiModel: getModelValue(openaiModelSelect, openaiModelCustom, 'gpt-5.6-terra'),
+      glmModel: getModelValue(glmModelSelect, glmModelCustom, 'glm-5.2'),
       glmEndpoint: glmEndpointSelect ? glmEndpointSelect.value : 'auto',
-      geminiModel: getModelValue(geminiModelSelect, geminiModelCustom, 'gemini-2.5-flash'),
-      deepseekModel: getModelValue(deepseekModelSelect, deepseekModelCustom, 'deepseek-chat'),
-      qwenModel: getModelValue(qwenModelSelect, qwenModelCustom, 'qwen-plus'),
+      geminiModel: getModelValue(geminiModelSelect, geminiModelCustom, 'gemini-3.8-flash'),
+      deepseekModel: getModelValue(deepseekModelSelect, deepseekModelCustom, 'deepseek-flash'),
+      qwenModel: getModelValue(qwenModelSelect, qwenModelCustom, 'qwen3.8-flash'),
       backendToken: backendTokenInput.value,
       contexts: contexts,
       priorityTargets: collectPriorityTargets(),
@@ -638,6 +639,14 @@
     if (!confirm('Delete context "' + ctx.name + '"?')) return;
 
     contexts = contexts.filter(function (c) { return c.id !== id; });
+
+    // Reset any per-platform dropdown that pointed at the deleted context.
+    // (Save collects activeContext from these dropdowns, so clearing them
+    // here prevents a dangling reference on the next save.)
+    ['linkedin', 'facebook', 'x', 'reddit'].forEach(function (platform) {
+      var sel = document.getElementById('ps-' + platform + '-activeContext');
+      if (sel && sel.value === id) sel.value = '';
+    });
 
     saveContextToSettings();
     renderContexts();

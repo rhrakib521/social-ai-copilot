@@ -345,7 +345,7 @@ async function callQwen(messages, options) {
 
 async function callBackendProxy(messages, options) {
   var backendToken = options.backendToken;
-  var backendUrl = options.backendUrl || 'https://localhost:3000/api/generate';
+  var backendUrl = options.backendUrl || 'http://127.0.0.1:3000/api/generate';
   var maxTokens = options.maxTokens || 300;
 
   var response = await fetchWithTimeout(backendUrl, {

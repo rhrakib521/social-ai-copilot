@@ -195,6 +195,35 @@ const X_POST = `
   </div>
 </article>`;
 
+// LinkedIn 2026 SDUI feed (live-verified 2026-09-18): hashed classes only,
+// posts are [role=listitem] in [data-testid=mainFeed], text lives in
+// [data-testid=expandable-text-box] with the …more button INSIDE it, and the
+// comment editor is TipTap/ProseMirror (.tiptap.ProseMirror).
+const LI_SDUI = `
+<div data-sdui-screen="com.linkedin.sdui.flagshipnav.feed.MainFeed">
+  <div role="list" data-testid="mainFeed" data-component-type="LazyColumn">
+    <div role="listitem" class="e5d9f935 _82f5e5dd">
+      <a href="/in/jayanta-dey"><span>Jayanta Dey</span></a>
+      <span class="a44d999b hovercard">Johns Hopkins PhD | Machine Learning Scientist</span>
+      <div data-testid="expandable-text-box">
+        <span class="a44d999b _9ac82a20">SDUI-POST: We are migrating our whole search stack to learned sparse retrieval and latency dropped 40 percent across every shard cluster.</span>
+        <button data-testid="expandable-text-button" class="_9a2a9e95">…more</button>
+      </div>
+      <button aria-label="Reaction button state: no reaction">Like</button>
+      <button aria-label="Comment">523</button>
+      <button aria-label="Repost">Repost</button>
+      <div class="comment-box-region">
+        <div class="tiptap ProseMirror _638ab" contenteditable="true" role="textbox" dir="auto" aria-label="Text editor for creating comments"></div>
+      </div>
+    </div>
+    <div role="listitem" class="e5d9f935 _82f5e5dd">
+      <div data-testid="expandable-text-box">
+        <span class="a44d999b">SDUI-DECOY: unrelated post about a marble collection.</span>
+      </div>
+    </div>
+  </div>
+</div>`;
+
 // ═══════════════════════════ TESTS ═══════════════════════════
 
 let pass = 0, fail = 0;
@@ -275,7 +304,19 @@ async function main() {
     check('tweet text reaches the API', /X-POST: Shipping v2/.test(userMsg), userMsg.slice(0, 200));
   }
 
-  console.log('[7] Heuristic fallback survives renamed classes');
+  console.log('[7] LinkedIn 2026 SDUI feed (live-verified structure)');
+  {
+    const { context, request } = await runThroughApi('linkedin', 'https://www.linkedin.com/feed/', LI_SDUI, '.tiptap.ProseMirror');
+    const userMsg = request.body.messages[1].content;
+    check('SDUI: post text reaches the API', /SDUI-POST: We are migrating/.test(userMsg), userMsg.slice(0, 200));
+    check('SDUI: "…more" button label NOT in text', !/…more/.test(userMsg) && !/\\.\\.\\.more/.test(userMsg));
+    check('SDUI: decoy post NOT in message', !/SDUI-DECOY/.test(userMsg));
+    check('SDUI: author found via /in/ href fallback', /Jayanta Dey/.test(userMsg), context.author);
+    check('SDUI: Like/Repost button labels NOT in text', !/\\bLike\\b/.test(userMsg) && !/Repost/.test(userMsg));
+    check('SDUI: comment count 523 reaches the API as engagement', /523/.test(userMsg));
+  }
+
+  console.log('[8] Heuristic fallback survives renamed classes');
   {
     // Same structure as LI_STANDARD but every known class renamed — only the
     // heuristic (largest text block) can find the post text.

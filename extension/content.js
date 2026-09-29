@@ -94,6 +94,16 @@
     return Math.round(num);
   }
 
+  // Escape text before interpolating it into innerHTML (log lines, target
+  // chips) — AI-generated comment text must never parse as markup.
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function extractCountFromEl(el) {
     if (!el) return 0;
     var label = el.getAttribute('aria-label') || '';
@@ -345,6 +355,9 @@
   var PLATFORMS = {
     linkedin: {
       editableFields: [
+        // 2026 SDUI feed: TipTap/ProseMirror editors (ql-editor is gone)
+        '.tiptap.ProseMirror[contenteditable="true"]',
+        '.tiptap[contenteditable="true"]',
         '.ql-editor[contenteditable="true"]',
         '.msg-form__contenteditable[contenteditable="true"]',
         '.comments-comment-texteditor [contenteditable="true"]',
@@ -361,6 +374,10 @@
         '[contenteditable="true"][aria-label*="Write"]'
       ],
       postContainers: [
+        // 2026 SDUI feed: posts are [role=listitem] inside [data-testid=mainFeed]
+        // (all semantic classes are hashed away; these attributes are the stable hooks)
+        '[data-testid="mainFeed"] [role="listitem"]',
+        '[role="listitem"]',
         // Primary post wrappers (old + new patterns)
         '.feed-shared-update-v2',
         '.feed-shared-celebration-v2',
@@ -382,6 +399,8 @@
       // Tried ONE AT A TIME in this priority order (most-specific first).
       // Updated June 2026 to cover the new text-view-model-migration patterns.
       postContentSelector: [
+        // 2026 SDUI feed: expandable post text container
+        '[data-testid="expandable-text-box"]',
         // New 2026 text view model patterns
         '.update-components-text .break-words',
         '.update-components-text',
@@ -421,15 +440,21 @@
         // Broader fallback
         '.update-components-actor span[dir="ltr"]',
         '[data-control-name="actor"] span[dir="ltr"]',
-        '[data-control-name="actor"] .visually-hidden'
+        '[data-control-name="actor"] .visually-hidden',
+        // 2026 SDUI feed: author name lives in profile/company links
+        // (href patterns are the only stable markup left)
+        'a[href*="/in/"] span[dir="ltr"]',
+        'a[href*="/company/"] span[dir="ltr"]',
+        'a[href*="/in/"] span',
+        'a[href*="/company/"] span'
       ].join(', '),
       personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.',
-      postSelector: '.feed-shared-update-v2, .feed-shared-celebration-v2, .occludable-update, [data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]',
-      commentButtonSelector: 'button[aria-label*="Comment"], button[aria-label*="comment"], button[data-control-name="comment.toggle"]',
-      replyFieldSelector: '.ql-editor[contenteditable="true"]',
+      postSelector: '[data-testid="mainFeed"] [role="listitem"], .feed-shared-update-v2, .feed-shared-celebration-v2, .occludable-update, [data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]',
+      commentButtonSelector: 'button[aria-label="Comment"], button[aria-label*="Comment"], button[aria-label*="comment"], button[data-control-name="comment.toggle"]',
+      replyFieldSelector: '.tiptap.ProseMirror[contenteditable="true"], .ql-editor[contenteditable="true"]',
       submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button, button[data-control-name="reply.submit"]',
       reactionCountSelector: '.social-details-social-counts__reactions-count, button[aria-label*="react" i] span, span.social-details-social-counts__reactions-count, [data-test-id="social-counts-reactions"], .social-counts-reactions',
-      commentCountSelector: '.social-details-social-counts__comments, button[aria-label*="comment" i] span, [data-test-id="social-counts-comments"]',
+      commentCountSelector: '.social-details-social-counts__comments, button[aria-label*="comment" i] span, button[aria-label="Comment"], [data-test-id="social-counts-comments"]',
       authorLinkSelector: '.update-components-actor__image a, .update-components-actor__title a, [data-control-name="actor"] a, .feed-shared-actor__image a'
     },
     facebook: {
@@ -758,36 +783,48 @@
 
     // Strategy 1: Look for the largest text-bearing <p> or <span> block inside the post.
     // Posts typically have a dedicated content div with paragraphs.
-    var candidates = postEl.querySelectorAll('p, span[dir="ltr"], div[dir="ltr"], span[dir="auto"], div[dir="auto"]');
-    var best = null;
-    var bestLen = 0;
-    for (var ci = 0; ci < candidates.length; ci++) {
-      var cEl = candidates[ci];
-      // Skip anything inside a button ("Like", "Follow", "…more") — that is UI chrome
-      if (cEl.closest && cEl.closest('button, [role="button"], a')) continue;
-      // Skip elements that look like UI chrome (headers, social bar)
-      var parentClasses = (cEl.parentElement && cEl.parentElement.className) || '';
-      var selfClasses = cEl.className || '';
-      var combined = (parentClasses + ' ' + selfClasses).toLowerCase();
-      if (combined.indexOf('actor') !== -1) continue;     // author header
-      if (combined.indexOf('social-counts') !== -1) continue;  // engagement bar
-      if (combined.indexOf('social-activity') !== -1) continue;
-      if (combined.indexOf('comment-button') !== -1) continue;
-      if (combined.indexOf('reaction') !== -1 && combined.indexOf('text') === -1) continue;
-      if (combined.indexOf('footer') !== -1) continue;
-      if (combined.indexOf('actions-bar') !== -1) continue;
-      if (combined.indexOf('see-more') !== -1 || combined.indexOf('show-more') !== -1) continue;
-      if (combined.indexOf('control') !== -1 && combined.indexOf('text') === -1) continue;
-      // Skip very short bits (names, timestamps, labels)
-      var cText = (cEl.innerText || '').trim();
-      if (cText.length < 15) continue;
-      if (cText.length > bestLen) {
-        bestLen = cText.length;
-        best = cEl;
+    // Two tiers: spans/ps are leaf-ish text holders, so they are tried FIRST —
+    // plain divs only as a last resort, because a wrapper div's text includes
+    // buttons, names and comments (pollution). Plain span/div matter for SDUI
+    // feeds (LinkedIn 2026) where text nodes carry only hashed classes and no
+    // dir attribute.
+    function scanCandidates(selector) {
+      var candidates = postEl.querySelectorAll(selector);
+      var b = null;
+      var bLen = 0;
+      for (var ci = 0; ci < candidates.length; ci++) {
+        var cEl = candidates[ci];
+        // Skip anything inside a button ("Like", "Follow", "…more") — that is UI chrome
+        if (cEl.closest && cEl.closest('button, [role="button"], a')) continue;
+        // Skip elements that look like UI chrome (headers, social bar)
+        var parentClasses = (cEl.parentElement && cEl.parentElement.className) || '';
+        var selfClasses = cEl.className || '';
+        var combined = (parentClasses + ' ' + selfClasses).toLowerCase();
+        if (combined.indexOf('actor') !== -1) continue;     // author header
+        if (combined.indexOf('social-counts') !== -1) continue;  // engagement bar
+        if (combined.indexOf('social-activity') !== -1) continue;
+        if (combined.indexOf('comment-button') !== -1) continue;
+        if (combined.indexOf('reaction') !== -1 && combined.indexOf('text') === -1) continue;
+        if (combined.indexOf('footer') !== -1) continue;
+        if (combined.indexOf('actions-bar') !== -1) continue;
+        if (combined.indexOf('see-more') !== -1 || combined.indexOf('show-more') !== -1) continue;
+        if (combined.indexOf('control') !== -1 && combined.indexOf('text') === -1) continue;
+        // Skip very short bits (names, timestamps, labels)
+        var cText = (cEl.innerText || '').trim();
+        if (cText.length < 15) continue;
+        if (cText.length > bLen) {
+          bLen = cText.length;
+          b = cEl;
+        }
       }
+      return { el: b, len: bLen };
     }
-    if (best && bestLen > 15) {
-      var txt = (best.innerText || '').trim();
+    var tier1 = scanCandidates('p, span, span[dir="ltr"], span[dir="auto"]');
+    var tier2 = null;
+    if (!tier1.el) tier2 = scanCandidates('div, div[dir="ltr"], div[dir="auto"]');
+    var hit = tier1.el ? tier1 : tier2;
+    if (hit && hit.el && hit.len > 15) {
+      var txt = (hit.el.innerText || '').trim();
       if (txt.length > maxLength) txt = txt.substring(0, maxLength) + '...';
       return txt;
     }
@@ -835,6 +872,7 @@
   function expandCollapsedPost(postEl) {
     if (!postEl || !postEl.querySelectorAll) return;
     var btns = postEl.querySelectorAll(
+      '[data-testid="expandable-text-button"], ' + // 2026 SDUI "…more"
       '.see-more, ' +
       'button.feed-shared-inline-show-more-text, ' +
       '.feed-shared-inline-show-more-text button, ' +
@@ -893,6 +931,29 @@
     console.log('[SAIC] LinkedIn DOM diagnostic:', JSON.stringify(diag, null, 2));
   }
 
+  // Text of an element WITHOUT anything inside buttons ("…more", "Like", …) —
+  // SDUI containers (data-testid="expandable-text-box") embed the expand
+  // toggle inside the text container itself.
+  function textWithoutButtons(el) {
+    var parts = [];
+    function walk(node) {
+      if (!node) return;
+      if (node.nodeType === 3) { // text node
+        var t = node.textContent;
+        if (t) parts.push(t);
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      var tag = node.tagName;
+      if (tag === 'BUTTON' || tag === 'SCRIPT' || tag === 'STYLE') return;
+      if (node.getAttribute && node.getAttribute('role') === 'button') return;
+      var kids = node.childNodes;
+      for (var i = 0; i < kids.length; i++) walk(kids[i]);
+    }
+    walk(el);
+    return parts.join('').replace(/[ \t]+/g, ' ');
+  }
+
   function cleanExtractPostText(postEl, config, maxLength) {
     maxLength = maxLength || 2000;
     if (!postEl) return '';
@@ -925,7 +986,7 @@
           }
           if (nested) continue;
           collected.push(el);
-          var t = (el.innerText || el.textContent || '').trim();
+          var t = textWithoutButtons(el).trim() || (el.innerText || el.textContent || '').trim();
           if (t && t.length > 3) textParts.push(t);
         }
         if (textParts.length > 0) {
@@ -1263,10 +1324,27 @@
         if (current.getAttribute && current.getAttribute('contenteditable') === 'true') return current;
         // Role textbox (used by Reddit, LinkedIn, and many modern editors)
         if (current.getAttribute && current.getAttribute('role') === 'textbox') return current;
+        // Composed events (focusin/dblclick) hand us the shadow HOST when the
+        // real editor lives inside a web component (Reddit composers). Probe
+        // inside the shadow root for a matching editable field.
+        if (current.shadowRoot) {
+          var inner = null;
+          for (var j = 0; j < platformConfig.editableFields.length; j++) {
+            try { inner = querySelectorDeep(current, platformConfig.editableFields[j]); } catch (e) { inner = null; }
+            if (inner) return inner;
+          }
+          // Generic text-field fallback (e.g. Reddit's faceplate search box)
+          var generic = 'textarea, input[type="text"], input[type="search"], input[type="email"], [contenteditable="true"], [role="textbox"]';
+          try { inner = querySelectorDeep(current, generic); } catch (e) { inner = null; }
+          if (inner) return inner;
+        }
       }
       // Textareas and text inputs
       if (current.tagName === 'TEXTAREA') return current;
-      if (current.tagName === 'INPUT' && (current.type === 'text' || current.type === 'search')) return current;
+      if (current.tagName === 'INPUT' && (
+        current.type === 'text' || current.type === 'search' ||
+        current.type === 'email' || current.type === 'tel' || current.type === 'url'
+      )) return current;
       current = current.parentElement;
       depth++;
     }
@@ -1292,6 +1370,17 @@
     currentPopoverEl = null;
   }
 
+  // Keep the floating AI trigger glued to its field across scroll/resize,
+  // and drop it once the field leaves the DOM.
+  function positionTrigger() {
+    if (!currentTriggerWrapper || !activeField) return;
+    if (!activeField.isConnected) { removeExistingTrigger(); return; }
+    var rect = activeField.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) { removeExistingTrigger(); return; }
+    currentTriggerWrapper.style.left = Math.max(4, rect.right - 44) + 'px';
+    currentTriggerWrapper.style.top = (rect.bottom + 4) + 'px';
+  }
+
   function createTriggerForField(field) {
     removeExistingTrigger();
     hidePopover();
@@ -1307,12 +1396,14 @@
     wrapper.className = 'saic-trigger-wrapper';
     wrapper.appendChild(trigger);
 
-    field.parentNode.insertBefore(wrapper, field.nextSibling);
+    // Append to document.body, NOT next to the field: the wrapper is
+    // position:fixed and placed from viewport rects, and body-append keeps it
+    // in the light DOM — inside a shadow root (Reddit composers) the
+    // manifest-injected styles.css would not reach it, and SPA re-renders of
+    // the field's subtree would orphan it.
+    document.body.appendChild(wrapper);
 
-    var rect = field.getBoundingClientRect();
     wrapper.style.position = 'fixed';
-    wrapper.style.left = (rect.right - 44) + 'px';
-    wrapper.style.top = (rect.bottom + 4) + 'px';
     wrapper.style.zIndex = '999998';
 
     currentTriggerWrapper = wrapper;
@@ -1324,6 +1415,7 @@
       openPopover(field);
     });
 
+    positionTrigger();
     return { trigger: trigger, wrapper: wrapper, field: field };
   }
 
@@ -2048,10 +2140,31 @@
   });
 
   // ── Track last focused editable field for keyboard shortcut ──
+  // Also surfaces the floating "AI" trigger button next to the focused field,
+  // so the copilot is discoverable without knowing about double-click.
+  function isOwnUi(el) {
+    return !!(el && el.closest && el.closest(
+      '.saic-auto-panel, .saic-auto-btn, .saic-popover, .saic-trigger-wrapper, ' +
+      '.saic-diag-overlay, .saic-review-overlay'
+    ));
+  }
+
   document.addEventListener('focusin', function (e) {
+    if (isOwnUi(e.target)) return;
     var field = findEditableField(e.target);
-    if (field) activeField = field;
+    if (field) {
+      activeField = field;
+      if (!currentPopoverEl) {
+        try { createTriggerForField(field); } catch (err) { /* non-fatal */ }
+      }
+    } else if (currentTriggerWrapper && !currentTriggerWrapper.contains(e.target)) {
+      removeExistingTrigger();
+    }
   });
+
+  // Keep the trigger positioned while the page scrolls or the window resizes
+  window.addEventListener('scroll', positionTrigger, true);
+  window.addEventListener('resize', positionTrigger);
 
   // ── Initialization ──
   function init() {
@@ -2107,6 +2220,16 @@
       savedSettings = settings;
       // Initialize automation engine after settings are loaded
       AutomationEngine.init();
+
+      // Persist a running engine across page navigation (feed → post detail,
+      // profile visits, soft navigations) the same way the X/Reddit engines
+      // do before their scripted navigations. loadState() only restores
+      // 'running' state that is < 5 min old, and stop() clears it.
+      window.addEventListener('pagehide', function () {
+        try {
+          if (AutomationEngine.state === 'running') AutomationEngine.saveState();
+        } catch (e) { /* best effort */ }
+      });
 
       // Check for pending actions from page navigations OR restore running state
       // Priority: 1) pending actions (tweet detail / Reddit comments) 2) restored state (returning from detail)
@@ -2221,6 +2344,7 @@
 
   // Named handler so we can remove it if platform is disabled
   function handleDblClick(e) {
+    if (isOwnUi(e.target)) return;
     var field = findEditableField(e.target);
     if (field) {
       e.preventDefault();
@@ -2349,6 +2473,7 @@
     },
 
     start: function () {
+      var self = this;
       if (!this._confirmed) {
         if (!confirm('Automated commenting may violate platform Terms of Service and could result in account suspension or permanent ban.\n\nAI-generated comments may need to be disclosed under FTC and EU regulations.\n\nContinue?')) return;
         this._confirmed = true;
@@ -2491,7 +2616,13 @@
         if (self.meetsEngagementThreshold(engagement) && engagement.total > bestScore) {
           bestScore = engagement.total;
           bestPost = post;
-          bestReason = 'Engagement: ' + engagement.reactions + ' reactions, ' + engagement.comments + ' comments';
+          // getEngagementScore normalizes X retweets into the "comments" slot —
+          // label it correctly per platform so the log is truthful.
+          bestReason = platformName === 'x'
+            ? 'Engagement: ' + engagement.reactions + ' likes, ' + engagement.comments + ' reposts'
+            : platformName === 'reddit'
+              ? 'Engagement: ' + engagement.reactions + ' upvotes, ' + engagement.comments + ' comments'
+              : 'Engagement: ' + engagement.reactions + ' reactions, ' + engagement.comments + ' comments';
         }
       }
       if (!bestPost) {
@@ -2810,7 +2941,7 @@
       if (!logEl) return;
       var html = '';
       var start = Math.max(0, this.logEntries.length - 5);
-      for (var i = start; i < this.logEntries.length; i++) html += '<div class="saic-log-entry">' + this.logEntries[i] + '</div>';
+      for (var i = start; i < this.logEntries.length; i++) html += '<div class="saic-log-entry">' + escapeHtml(this.logEntries[i]) + '</div>';
       logEl.innerHTML = html;
       logEl.scrollTop = logEl.scrollHeight;
     },
@@ -3914,7 +4045,7 @@
       var html = '';
       var targets = this.config.priorityTargets;
       for (var i = 0; i < targets.length; i++) {
-        html += '<span class="saic-target-chip">' + targets[i].name + '<span class="saic-target-remove" data-idx="' + i + '">&times;</span></span>';
+        html += '<span class="saic-target-chip">' + escapeHtml(targets[i].name) + '<span class="saic-target-remove" data-idx="' + i + '">&times;</span></span>';
       }
       listEl.innerHTML = html;
       var chips = listEl.querySelectorAll('.saic-target-remove');
@@ -4123,7 +4254,7 @@
             '<div class="saic-auto-mode-toggle"><span class="saic-mode-label">Auto</span><label class="saic-toggle"><input type="checkbox" class="saic-auto-cfg-mode" checked><span class="saic-toggle-slider"></span></label></div></div>' +
           '<div class="saic-auto-stats"><span class="saic-auto-stat">Comments: <strong>0</strong>/<span class="saic-auto-limit">∞</span></span><span class="saic-auto-stat">Skipped: <strong class="saic-auto-skipped">0</strong></span><span class="saic-auto-stat">Time: <strong class="saic-auto-elapsed">0:00</strong></span></div>' +
           '<div class="saic-auto-timer"></div>' +
-          '<div class="saic-auto-controls"><button type="button" class="saic-auto-toggle-btn saic-auto-start">Start</button><button type="button" class="saic-auto-toggle-btn saic-auto-pause" style="display:none;">Pause</button><button type="button" class="saic-auto-gear" title="Settings">⚙</button></div>' +
+          '<div class="saic-auto-controls"><button type="button" class="saic-auto-toggle-btn saic-auto-start">Start</button><button type="button" class="saic-auto-toggle-btn saic-auto-pause" style="display:none;">Pause</button><button type="button" class="saic-auto-toggle-btn saic-auto-stop" style="display:none;">Stop</button><button type="button" class="saic-auto-gear" title="Settings">⚙</button></div>' +
           '<div class="saic-auto-log"></div>' +
 	          '<div class="saic-history-toggle"><button type="button" class="saic-history-btn">History <span class="saic-history-count">0</span></button></div>' +
 	          '<div class="saic-history-list"></div>' +
@@ -4157,6 +4288,10 @@
       pauseBtn.addEventListener('click', function () {
         if (self.state === 'running') self.pause();
         else if (self.state === 'paused') self.resume();
+      });
+      var stopBtn = self.panelEl.querySelector('.saic-auto-stop');
+      stopBtn.addEventListener('click', function () {
+        if (self.state === 'running' || self.state === 'paused') self.stop('Stopped manually');
       });
       self.panelEl.querySelector('.saic-auto-gear').addEventListener('click', function () {
         self.panelEl.querySelector('.saic-auto-config').classList.toggle('open');
@@ -4234,27 +4369,29 @@
       var statusText = self.panelEl.querySelector('.saic-auto-status-text');
       var startBtn = self.panelEl.querySelector('.saic-auto-start');
       var pauseBtn = self.panelEl.querySelector('.saic-auto-pause');
+      var stopBtn = self.panelEl.querySelector('.saic-auto-stop');
       var timerEl = self.panelEl.querySelector('.saic-auto-timer');
       dot.className = 'saic-auto-dot';
       switch (self.state) {
         case 'idle':
           dot.classList.add('stopped'); statusText.textContent = 'Idle';
           startBtn.textContent = 'Start'; startBtn.className = 'saic-auto-toggle-btn saic-auto-start'; startBtn.style.display = '';
-          pauseBtn.style.display = 'none'; timerEl.textContent = '';
+          pauseBtn.style.display = 'none'; stopBtn.style.display = 'none'; timerEl.textContent = '';
           self.btnEl.className = 'saic-auto-btn'; self.btnEl.textContent = '▶'; break;
         case 'running':
           dot.classList.add('running'); statusText.textContent = 'Running';
           startBtn.style.display = 'none'; pauseBtn.textContent = 'Pause'; pauseBtn.className = 'saic-auto-toggle-btn saic-auto-pause'; pauseBtn.style.display = '';
+          stopBtn.style.display = '';
           self.btnEl.className = 'saic-auto-btn running'; self.btnEl.textContent = '⏸'; break;
         case 'paused':
           dot.classList.add('paused'); statusText.textContent = 'Paused';
           startBtn.textContent = 'Resume'; startBtn.className = 'saic-auto-toggle-btn saic-auto-start'; startBtn.style.display = '';
-          pauseBtn.style.display = 'none';
+          pauseBtn.style.display = 'none'; stopBtn.style.display = '';
           self.btnEl.className = 'saic-auto-btn'; self.btnEl.textContent = '▶'; break;
         case 'stopped':
           dot.classList.add('stopped'); statusText.textContent = 'Stopped (' + self.stats.commentsMade + ')';
           startBtn.textContent = 'Restart'; startBtn.className = 'saic-auto-toggle-btn saic-auto-start'; startBtn.style.display = '';
-          pauseBtn.style.display = 'none'; timerEl.textContent = '';
+          pauseBtn.style.display = 'none'; stopBtn.style.display = 'none'; timerEl.textContent = '';
           self.btnEl.className = 'saic-auto-btn'; self.btnEl.textContent = '▶'; break;
       }
       var cs = self.panelEl.querySelector('.saic-auto-stat strong');

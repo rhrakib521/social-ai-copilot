@@ -1,7 +1,7 @@
 {
-  "name": "c",
+  "name": "social-ai-copilot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Chrome extension AI copilot for LinkedIn, Facebook, X, and Reddit — context-aware replies, comments, and posts powered by 6 AI providers.",
   "homepage": "https://github.com/rhrakib521/social-ai-copilot#readme",
   "bugs": {
     "url": "https://github.com/rhrakib521/social-ai-copilot/issues"
@@ -18,7 +18,8 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/linkedin-extract-harness.js && node test/provider-harness.js && node test/e2e-context-harness.js && node test/stop-button-harness.js",
+    "check": "node --check extension/content.js && node --check extension/background.js && node --check extension/popup.js"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

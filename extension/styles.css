@@ -1,5 +1,28 @@
 /* styles.css — Social AI Copilot injected styles */
 
+/* All SAIC surfaces are designed light — pin native form controls (selects,
+   inputs, range sliders) to the light scheme so dark-mode OSes don't render
+   dark widgets inside the light popover. */
+.saic-popover,
+.saic-auto-panel,
+.saic-review-card {
+  color-scheme: light;
+}
+
+/* Respect OS reduced-motion preference: entrance/pulse animations only. */
+@media (prefers-reduced-motion: reduce) {
+  .saic-popover,
+  .saic-more-menu,
+  .saic-result-card,
+  .saic-auto-panel {
+    animation: none !important;
+  }
+  .saic-result-card.saic-loading,
+  .saic-auto-dot.running {
+    animation: none !important;
+  }
+}
+
 /* ===== Trigger Button ===== */
 .saic-trigger-wrapper {
   pointer-events: auto;
