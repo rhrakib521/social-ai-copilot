@@ -450,6 +450,26 @@
       ].join(', '),
       personality: 'You are writing for LinkedIn. The tone should be professional and thought-leadership oriented. Use industry-relevant language. Keep content polished and suitable for a business network.',
       postSelector: '[data-testid="mainFeed"] [role="listitem"], .feed-shared-update-v2, .feed-shared-celebration-v2, .occludable-update, [data-urn*="urn:li:activity"], [data-urn*="urn:li:ugcPost"], [data-urn*="urn:li:share"]',
+      // Anchor for scroll-root resolution when no posts exist yet (feed end,
+      // slow hydrate). 2026 live-verified: the feed scrolls #workspace.
+      feedRootSelector: '[data-testid="mainFeed"], #workspace, main, [role="main"]',
+      // 2026 feed: [role="listitem"] inside mainFeed ALSO matches non-post
+      // modules (share box, "Add to your feed", sort toggle) which have no
+      // comment button and no post text. Live-verified Sept 2026: every real
+      // post has a comment button and an expandable text box; modules have
+      // neither. Their rotating content also poisons post fingerprints.
+      postFilter: function (el) {
+        try {
+          if (el.querySelector('button[aria-label="Comment"], button[aria-label*="Comment"], button[data-control-name="comment.toggle"]')) return true;
+          var ext = el.querySelector('[data-testid="expandable-text-box"]');
+          if (ext && (ext.textContent || '').trim().length > 40) return true;
+          var urn = el.getAttribute('data-urn');
+          if (urn && /urn:li:(activity|ugcPost|share)/.test(urn)) return true;
+          // Legacy markup fallback: semantic actor class + substantial text
+          if (el.querySelector('.update-components-actor, .feed-shared-actor') && (el.innerText || '').trim().length > 80) return true;
+        } catch (e) {}
+        return false;
+      },
       commentButtonSelector: 'button[aria-label="Comment"], button[aria-label*="Comment"], button[aria-label*="comment"], button[data-control-name="comment.toggle"]',
       replyFieldSelector: '.tiptap.ProseMirror[contenteditable="true"], .ql-editor[contenteditable="true"]',
       submitButtonSelector: 'button[type="submit"], button.comments-comment-box__submit-button, button[data-control-name="reply.submit"]',
@@ -664,6 +684,53 @@
       }
     }
     return results;
+  }
+
+  // ── Scroll-root resolution ──
+  // Some feeds do not scroll the window: LinkedIn's 2026 SDUI feed scrolls an
+  // inner <main id="workspace" style="overflow-y: scroll"> container (verified
+  // live — window.scrollTo moves nothing, #workspace.scrollTop does). Resolve
+  // candidate scroll roots at runtime: innermost scrollable ancestor of the
+  // anchor element first, the document root (window) always last.
+  function findScrollRootCandidates(anchorEl) {
+    var candidates = [];
+    var seen = [];
+    function push(el) {
+      if (!el || el.nodeType !== 1 || el === document.body || el === document.documentElement) return;
+      for (var i = 0; i < seen.length; i++) { if (seen[i] === el) return; }
+      seen.push(el);
+      var oy = '';
+      try { oy = window.getComputedStyle(el).overflowY; } catch (e) { return; }
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 8) candidates.push(el);
+    }
+    var cur = anchorEl;
+    var hops = 0;
+    while (cur && hops++ < 64) {
+      if (cur.nodeType === 1) push(cur);
+      var parent = cur.parentElement;
+      if (!parent) {
+        // walk up through shadow boundaries
+        try { parent = (cur.getRootNode && cur.getRootNode().host) || null; } catch (e) { parent = null; }
+      }
+      cur = parent;
+    }
+    var root = document.scrollingElement || document.documentElement;
+    if (root && candidates.indexOf(root) === -1) candidates.push(root);
+    return candidates;
+  }
+
+  // Does this reply field belong to the given post? 2026 SDUI markup nests
+  // the TipTap composer inside the post's own [role="listitem"] (live-verified);
+  // legacy markup used dedicated post-container classes. Containment both ways,
+  // because postSelector lists both the listitem and inner [data-urn] wrappers
+  // for the same post. A field with no recognizable post ancestor (modal /
+  // portal composer) is accepted — matches the historical behavior.
+  function fieldBelongsToPost(field, postEl) {
+    if (!field || !postEl) return true;
+    var container = field.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
+    if (!container) container = field.closest('[role="listitem"]');
+    if (!container) return true;
+    return container === postEl || container.contains(postEl) || postEl.contains(container);
   }
 
   function extractShadowText(el, maxLength) {
@@ -2451,6 +2518,9 @@
     _cdBgTimer: null,
     nextActionTime: null,
     _abortScroll: false,
+    _scrollCtrl: null,
+    _stuckScrolls: 0,
+    _lastCommentBtn: null,
     logEntries: [],
     commentHistory: [],
     _historySyncTimer: null,
@@ -2488,6 +2558,9 @@
       this.stats = { commentsMade: 0, startTime: Date.now(), postsScanned: 0, postsSkipped: 0 };
       this.processedPosts = new Set();
       this._abortScroll = false;
+      this._scrollCtrl = null;   // re-resolve the scroll root each session
+      this._stuckScrolls = 0;
+      this._lastCommentBtn = null;
       this.logEntries = [];
       // Load persisted commented posts for cross-session dedup
       this.loadPersistedPosts();
@@ -2550,7 +2623,7 @@
       var posts = self.findCandidatePosts();
       if (posts.length === 0) {
         self.addLog('No posts found, scrolling...');
-        self.humanScroll(window.scrollY + window.innerHeight * (1 + Math.random() * 2), function () {
+        self.humanScroll(self.currentScrollY() + window.innerHeight * (1 + Math.random() * 2), function () {
           if (self.state !== 'running') return;
           bgTimeout(function () {
             posts = self.findCandidatePosts();
@@ -2594,6 +2667,15 @@
             }
           }
         }
+        // LinkedIn 2026: comments/previews render as listitems NESTED inside a
+        // post listitem — only the outer one is the candidate post.
+        if (platformName === 'linkedin') {
+          var outerLi = el.parentElement ? el.parentElement.closest(platformConfig.postSelector) : null;
+          if (outerLi && outerLi !== el) continue;
+        }
+        // Platform post filter (LinkedIn 2026): reject non-post feed modules
+        // (share box, "Add to your feed", sort toggle) that match postSelector.
+        if (platformConfig.postFilter && !platformConfig.postFilter(el)) continue;
         var fp = this.getPostFingerprint(el);
         // Deduplicate: same fingerprint seen in this scan (multiple DOM elements for same post)
         if (seenFps[fp]) continue;
@@ -2637,7 +2719,7 @@
           ? window.innerHeight * (2 + Math.random() * 2)
           : window.innerHeight * (1 + Math.random() * 1.5);
         self.addLog('All below threshold, scrolling...');
-        self.humanScroll(window.scrollY + scrollDist, function () {
+        self.humanScroll(self.currentScrollY() + scrollDist, function () {
           if (self.state !== 'running') return;
           self.scheduleNextCycle(jitter(3000, 0.3));
         });
@@ -2682,7 +2764,7 @@
               var skipScroll = platformName === 'x'
                 ? window.innerHeight * (1.5 + Math.random() * 1.5)
                 : window.innerHeight * (0.5 + Math.random() * 0.5);
-              self.humanScroll(window.scrollY + skipScroll, function () {
+              self.humanScroll(self.currentScrollY() + skipScroll, function () {
                 if (self.state !== 'running') return;
                 self.scheduleNextCycle(jitter(3000, 0.3));
               });
@@ -2715,7 +2797,7 @@
       var postScroll = platformName === 'x'
         ? window.innerHeight * (1 + Math.random() * 1.5)
         : window.innerHeight * (0.5 + Math.random() * 0.5);
-      self.humanScroll(window.scrollY + postScroll, function () {
+      self.humanScroll(self.currentScrollY() + postScroll, function () {
         var extraPause = (self.stats.commentsMade % (5 + Math.floor(Math.random() * 4)) === 0) ? jitter(randomBetween(5000, 15000), 0.2) : 0;
         self.scheduleNextCycle(jitter(self.config.interval * 1000, 0.2) + extraPause);
       });
@@ -2877,13 +2959,10 @@
         // Verify the field is associated with the target post (not a stale one from a previous post)
         // X.com: The reply compose box is a SIBLING of the tweet article, not a child,
         // so closest('article[data-testid="tweet"]') returns null — skip the check for X.
-        if (platformName !== 'x') {
-          var fieldPost = replyField.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
-          if (fieldPost && fieldPost !== postEl) {
-            console.log('[SAIC-Auto] Reply field belongs to a different post, aborting');
-            callback(false);
-            return;
-          }
+        if (platformName !== 'x' && !fieldBelongsToPost(replyField, postEl)) {
+          console.log('[SAIC-Auto] Reply field belongs to a different post, aborting');
+          callback(false);
+          return;
         }
         // If field already has content from a previous attempt, clear it
         if (replyField.textContent && replyField.textContent.trim().length > 0) {
@@ -2994,8 +3073,9 @@
       // Press Escape to close any open comment field / dropdown
       document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
       document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Escape', keyCode: 27 }));
-      // Blur any focused editors that belong to already-processed posts
-      var editorSelectors = '.ql-editor[contenteditable="true"], .public-DraftEditor-content[contenteditable="true"], [data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_1"]';
+      // Blur any focused editors that belong to already-processed posts.
+      // 2026 LinkedIn composers are .tiptap.ProseMirror (ql-editor is gone).
+      var editorSelectors = '.ql-editor[contenteditable="true"], .tiptap.ProseMirror[contenteditable="true"], .tiptap[contenteditable="true"], .public-DraftEditor-content[contenteditable="true"], [data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_1"]';
       var editors = document.querySelectorAll(editorSelectors);
       for (var i = 0; i < editors.length; i++) {
         var ed = editors[i];
@@ -3005,7 +3085,7 @@
             ed.blur();
             continue;
           }
-          var post = ed.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"]');
+          var post = ed.closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"]') || ed.closest('[role="listitem"]');
           if (post && this.processedPosts.has(this.getPostFingerprint(post))) {
             ed.blur();
           }
@@ -3104,6 +3184,7 @@
       var postRect = postEl.getBoundingClientRect();
       humanMouseMove(btn, function () {
         btn.click();
+        self._lastCommentBtn = btn; // exclude this toggle when finding the submit
         console.log('[SAIC-Auto] Clicked comment button');
         var attempts = 0, maxAttempts = platformName === 'x' ? 15 : 10;
         var findField = function () {
@@ -3141,8 +3222,7 @@
                     // X.com: compose area is a sibling of the tweet article, so closest() returns null — accept it
                     if (platformName === 'x') { field = parentCandidates[j]; break; }
                     // Verify this field is in the same parent region as our post
-                    var fieldPost = parentCandidates[j].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
-                    if (fieldPost === postEl) { field = parentCandidates[j]; break; }
+                    if (fieldBelongsToPost(parentCandidates[j], postEl)) { field = parentCandidates[j]; break; }
                   }
                 } else {
                   var r2 = parentCandidates[j].getBoundingClientRect();
@@ -3169,8 +3249,7 @@
                       var dist = Math.abs(dy2);
                       if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
                     } else {
-                      var fPost = allCandidates[k].closest('.feed-shared-update-v2, .feed-shared-celebration-v2, [data-pagelet] [role="article"], article[data-testid="tweet"]');
-                      if (fPost === postEl) {
+                      if (fieldBelongsToPost(allCandidates[k], postEl)) {
                         var dist = Math.abs(dy2);
                         if (dist < bestDist) { bestDist = dist; field = allCandidates[k]; }
                       }
@@ -3486,6 +3565,11 @@
         chrome.runtime.sendMessage({ type: 'activateTab' });
       }
 
+      // Snapshot the DOM before typing so the dropdown can be located by diff.
+      // 2026 markup renders the typeahead inside the composer area with no a11y
+      // announcer — the snapshot diff is the markup-agnostic fallback detector.
+      var mentionSnap = self.captureMentionSnapshot(field);
+
       // Step 1: Type @ character to trigger mention observer
       field.focus();
       try { field.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: '@' })); } catch(e) {}
@@ -3500,8 +3584,8 @@
           return;
         }
         self.typeChars(field, pageName, function () {
-          // Step 3: Try to select from dropdown
-          self.selectMentionResult(field, pageName, function () {
+          // Step 3: Try to select from dropdown, then verify a real chip landed
+          self.selectMentionResult(field, pageName, mentionSnap, function () {
             if (wasHidden) self._restoreVisibility();
             callback();
           });
@@ -3509,7 +3593,7 @@
       }, wasHidden ? 800 : 400);
     },
 
-    selectMentionResult: function (field, pageName, callback) {
+    selectMentionResult: function (field, pageName, snap, callback) {
       var self = this;
       var maxAttempts = 12;
       var attempt = 0;
@@ -3518,25 +3602,27 @@
         if (self.state !== 'running') { callback(); return; }
         if (attempt >= maxAttempts) {
           console.log('[SAIC-Mention] TIMEOUT — no results after 3.6s. Dumping diagnostics:');
-          self.dumpMentionDiagnostics(field, pageName);
+          self.dumpMentionDiagnostics(field, pageName, snap);
           self.cleanupFailedMention(field, pageName, callback);
           return;
         }
         attempt++;
 
-        var hasResults = self.checkMentionResults(field);
-        if (hasResults) {
-          console.log('[SAIC-Mention] a11y confirmed results. Attempting click...');
-          self.dumpMentionDiagnostics(field, pageName);
+        var descriptor = self.checkMentionResults(field, snap);
+        if (descriptor) {
+          console.log('[SAIC-Mention] Dropdown detected via ' + descriptor.how + '. Attempting click...');
+          self.dumpMentionDiagnostics(field, pageName, snap);
 
           // Always try coordinate click first — visibility is spoofed for background tabs
-          self.clickMentionResult(pageName, function (clicked) {
+          self.clickMentionResult(field, descriptor, pageName, function (clicked) {
             if (clicked) {
               console.log('[SAIC-Mention] Clicked result successfully');
-              bgTimeout(callback, 600);
+              self.verifyMentionInserted(field, pageName, snap ? snap.chips : null, callback);
             } else {
               console.log('[SAIC-Mention] Could not click, trying keyboard fallback');
-              self.keyboardSelectMention(field, callback);
+              self.keyboardSelectMention(field, function () {
+                self.verifyMentionInserted(field, pageName, snap ? snap.chips : null, callback);
+              });
             }
           });
         } else {
@@ -3547,18 +3633,24 @@
       trySelect();
     },
 
-    dumpMentionDiagnostics: function (field, pageName) {
-      // Log a11y state
-      var container = field.closest('.comments-comment-box-comment__text-editor')
-        || (field.closest('.editor-container') ? field.closest('.editor-container').parentElement : null);
-      if (container) {
-        var a11y = container.querySelector('[role="status"]');
-        console.log('[SAIC-Mention] a11y label:', a11y ? a11y.getAttribute('aria-label') : 'NOT FOUND');
+    dumpMentionDiagnostics: function (field, pageName, snap) {
+      // What the detectors see right now (listbox / announcer / snapshot diff)
+      var descriptor = this.checkMentionResults(field, snap);
+      if (descriptor) {
+        console.log('[SAIC-Mention] Detector (' + descriptor.how + ') root: tag=' + descriptor.root.tagName +
+          ' class="' + String(descriptor.root.className || '').substring(0, 80) + '"' +
+          ' options=' + descriptor.options.length);
+        for (var oi = 0; oi < descriptor.options.length && oi < 6; oi++) {
+          console.log('[SAIC-Mention]   option[' + oi + ']: "' +
+            (descriptor.options[oi].textContent || '').trim().substring(0, 60) + '"');
+        }
+      } else {
+        console.log('[SAIC-Mention] Detector: no dropdown (listbox, announcer, and snapshot-diff all negative)');
       }
 
       // Search entire document for potential dropdown elements
       var selectors = [
-        '[role="listbox"]', '[role="option"]', '[role="list"]',
+        '[role="listbox"]', '[role="option"]', '[role="list"]', '[role="status"]',
         '[class*="typeahead"]', '[class*="mention"]', '[class*="search-result"]',
         '[class*="dropdown"]', '[class*="popup"]', '[class*="overlay"]',
         '[class*="suggest"]', '[class*="autocomplete"]', '[class*="popover"]'
@@ -3593,10 +3685,57 @@
       }
     },
 
-    clickMentionResult: function (pageName, callback) {
+    clickMentionResult: function (field, descriptor, pageName, callback) {
       var self = this;
       var target = null;
       var pnLower = pageName.toLowerCase();
+      var firstToken = (pageName.split(/\s+/)[0] || '').toLowerCase();
+
+      // Never click the composer itself, its ancestors, or wrappers containing it
+      var skip = [];
+      var walk = field;
+      while (walk && walk !== document.body) { skip.push(walk); walk = walk.parentElement; }
+
+      function isForbidden(el) {
+        if (skip.indexOf(el) !== -1) return true;
+        if (el.tagName === 'BODY' || el.tagName === 'HTML') return true;
+        if (el.classList && (el.classList.contains('ql-editor') || el.classList.contains('tiptap') ||
+            el.classList.contains('ProseMirror') || el.classList.contains('feed-shared-update-v2'))) return true;
+        // Feed posts are [role="listitem"]s too (2026 SDUI) — a post is never a
+        // dropdown option; recognise it by its post body / comment button
+        if (el.querySelector && (el.querySelector('[data-testid="expandable-text-box"]') ||
+            el.querySelector('button[aria-label="Comment"]'))) return true;
+        return false;
+      }
+
+      // Dropdown options can show truncated names — match the full name, or
+      // relax to a distinctive first token (>= 4 chars) inside a real dropdown
+      function optionMatches(el) {
+        var t = (el.textContent || '').trim().toLowerCase();
+        if (t.indexOf(pnLower) !== -1) return true;
+        if (firstToken.length >= 4 && t.indexOf(firstToken) !== -1) return true;
+        return false;
+      }
+
+      // Strategy 0: options from the detected dropdown descriptor
+      if (descriptor && descriptor.options && descriptor.options.length) {
+        for (var d = 0; d < descriptor.options.length; d++) {
+          if (isForbidden(descriptor.options[d])) continue;
+          if (optionMatches(descriptor.options[d])) {
+            target = descriptor.options[d];
+            console.log('[SAIC-Mention] Descriptor (' + descriptor.how + ') match:',
+              (target.textContent || '').trim().substring(0, 60));
+            break;
+          }
+        }
+        // Trust a single-option a11y listbox even without a text match — the
+        // query itself is the page name, so the lone option IS the best match
+        if (!target && descriptor.how === 'listbox' && descriptor.options.length === 1 &&
+            !isForbidden(descriptor.options[0])) {
+          target = descriptor.options[0];
+          console.log('[SAIC-Mention] Descriptor: single listbox option, selecting it');
+        }
+      }
 
       // Strategy 1: role="listbox" → role="option" (most reliable for LinkedIn)
       var listBoxes = document.querySelectorAll('[role="listbox"]');
@@ -3605,8 +3744,8 @@
         if (!document.hidden && listBoxes[lb].offsetParent === null) continue;
         var options = listBoxes[lb].querySelectorAll('[role="option"]');
         for (var i = 0; i < options.length; i++) {
-          var optText = (options[i].textContent || '').trim().toLowerCase();
-          if (optText.indexOf(pnLower) !== -1) {
+          if (isForbidden(options[i])) continue;
+          if (optionMatches(options[i])) {
             target = options[i];
             console.log('[SAIC-Mention] Strategy1 (role=option):', options[i].textContent.trim().substring(0, 60));
             break;
@@ -3629,7 +3768,10 @@
             var items = document.querySelectorAll(itemSelectors[s]);
             for (var j = 0; j < items.length; j++) {
               if (!document.hidden && items[j].offsetParent === null) continue;
+              if (isForbidden(items[j])) continue;
               var t = (items[j].textContent || '').trim().toLowerCase();
+              // Dropdown rows are short — a long text means a post, not an option
+              if (t.length >= 200) continue;
               if (t.indexOf(pnLower) !== -1) {
                 target = items[j];
                 console.log('[SAIC-Mention] Strategy2 (' + itemSelectors[s] + '):', t.substring(0, 60));
@@ -3640,24 +3782,20 @@
         }
       }
 
-      // Strategy 3: Brute force — find visible element near editor with matching text
+      // Strategy 3: Brute force — find visible element near the editor with matching text
       if (!target) {
         var isBg = document.hidden;
+        var fieldRect = null;
+        try { fieldRect = field ? field.getBoundingClientRect() : null; } catch (e) {}
         var all = document.querySelectorAll('*');
         for (var k = 0; k < all.length; k++) {
           var el = all[k];
+          if (isForbidden(el)) continue;
           if (!isBg && (el.offsetParent === null || el.offsetHeight < 5)) continue;
-          if (el.classList && (el.classList.contains('ql-editor') || el.classList.contains('feed-shared-update-v2'))) continue;
-          if (el.tagName === 'BODY' || el.tagName === 'HTML') continue;
-          // Skip proximity check in background tabs (getBoundingClientRect returns zeros)
-          if (!isBg) {
-            var fieldRect = document.querySelector('.ql-editor')
-              ? document.querySelector('.ql-editor').getBoundingClientRect()
-              : null;
-            if (fieldRect) {
-              var r = el.getBoundingClientRect();
-              if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
-            }
+          // Proximity vs the actual composer (skipped in background tabs where rects are zeros)
+          if (fieldRect && !isBg) {
+            var r = el.getBoundingClientRect();
+            if (r.top > fieldRect.bottom + 400 || r.bottom < fieldRect.top - 100) continue;
           }
           var text = (el.textContent || '').trim();
           if (text.length > 0 && text.length < 200 &&
@@ -3741,22 +3879,167 @@
       }, 300);
     },
 
-    checkMentionResults: function (field) {
-      // LinkedIn reports dropdown state via an a11y announcer element:
-      //   aria-label="3 suggestions found for query: Periscale"
-      //   aria-label="0 suggestions found for query: Periscale"
-      var container = field.closest('.comments-comment-box-comment__text-editor')
-        || (field.closest('.editor-container') ? field.closest('.editor-container').parentElement : null);
-      if (!container) return false;
+    checkMentionResults: function (field, snap) {
+      // Returns a dropdown descriptor {root, options[], how} or null, using
+      // three independent signals — any one wins:
+      //   1. listbox   — [role="listbox"] with text-bearing options (the 2026
+      //                  TipTap typeahead renders this inside the composer area)
+      //   2. announcer — document-wide [role="status"] "N suggestions found"
+      //                  (pre-2026 markup; the old container-scoped lookup died)
+      //   3. portal    — snapshot diff: new topmost element with option-ish
+      //                  children (markup-agnostic fallback)
+      // Signal 1: a11y listbox (primary on 2026 LinkedIn)
+      var listBoxes = document.querySelectorAll('[role="listbox"]');
+      for (var lb = 0; lb < listBoxes.length; lb++) {
+        var rawOpts = listBoxes[lb].querySelectorAll('[role="option"]');
+        var realOpts = [];
+        for (var o = 0; o < rawOpts.length; o++) {
+          if ((rawOpts[o].textContent || '').trim()) realOpts.push(rawOpts[o]);
+        }
+        if (realOpts.length > 0) return { root: listBoxes[lb], options: realOpts, how: 'listbox' };
+      }
 
-      var a11y = container.querySelector('[role="status"]');
-      if (!a11y) return false;
+      // Signal 2: a11y announcer anywhere in the document (pre-2026 markup)
+      var announcers = document.querySelectorAll('[role="status"]');
+      for (var a = 0; a < announcers.length; a++) {
+        var label = announcers[a].getAttribute('aria-label') || '';
+        if (label.indexOf('suggestion') === -1 || label.indexOf('found') === -1) continue;
+        if (label.indexOf('0 suggestions') !== -1) continue;
+        var host = announcers[a].closest('[class*="typeahead"], [class*="mention"], [class*="suggest"]')
+          || announcers[a].parentElement;
+        var annOpts = this.extractMentionOptions(host);
+        if (annOpts.length > 0) return { root: host, options: annOpts, how: 'announcer' };
+      }
 
-      var label = a11y.getAttribute('aria-label') || '';
-      if (label.indexOf('0 suggestions') !== -1) return false;
-      if (label.indexOf('suggestion') !== -1 && label.indexOf('found') !== -1) return true;
+      // Signal 3: snapshot diff — a new topmost element with option-ish children
+      if (snap && snap.seen) {
+        var scope = (field && (field.closest('[role="listitem"]') || field.parentElement)) || document.body;
+        if (scope) {
+          var fresh = scope.querySelectorAll('*');
+          for (var f = 0; f < fresh.length; f++) {
+            var el = fresh[f];
+            if (snap.seen.has(el)) continue;
+            if (el.parentElement && !snap.seen.has(el.parentElement)) continue; // not topmost
+            var opts3 = this.extractMentionOptions(el);
+            if (opts3.length > 0) return { root: el, options: opts3, how: 'portal' };
+          }
+        }
+        if (document.body) {
+          var bcNow = document.body.children;
+          for (var p = 0; p < bcNow.length; p++) {
+            if (snap.seen.has(bcNow[p])) continue;
+            var optsP = this.extractMentionOptions(bcNow[p]);
+            if (optsP.length > 0) return { root: bcNow[p], options: optsP, how: 'portal' };
+          }
+        }
+      }
 
-      return false;
+      return null;
+    },
+
+    captureMentionSnapshot: function (field) {
+      // Everything that exists before "@" is typed — used both to diff new
+      // elements into a dropdown descriptor and to verify chip insertion.
+      var snap = { seen: new Set(), bodyChildren: [], chips: null };
+      try {
+        if (document.body) {
+          var all = document.body.querySelectorAll('*');
+          for (var i = 0; i < all.length; i++) snap.seen.add(all[i]);
+        }
+      } catch (e) {}
+      snap.chips = this.countMentionChips(field);
+      return snap;
+    },
+
+    countMentionChips: function (field) {
+      // Count mention-chip-like nodes around the composer: entity links and
+      // data-attributed nodes. Counts only need to be comparable over time.
+      var scope = (field && (field.closest('[role="listitem"]') || field.parentElement)) || document.body;
+      var count = 0;
+      var texts = [];
+      if (scope) {
+        var chips = scope.querySelectorAll('a[href*="/company/"], a[href*="/in/"], a[href*="/school/"], [data-mention], [data-id^="urn:li:"], [data-entity-type]');
+        for (var i = 0; i < chips.length; i++) {
+          count++;
+          texts.push((chips[i].textContent || '').trim().toLowerCase());
+        }
+      }
+      return { count: count, texts: texts.join('|') };
+    },
+
+    extractMentionOptions: function (root) {
+      // Option-ish children of a dropdown root: real a11y options first, then
+      // leaf containers (2026 hashed-class markup has no stable attributes).
+      var out = [];
+      if (!root || !root.querySelectorAll) return out;
+      // A dropdown root never contains post anatomy — reject posts/comments
+      // that appeared inside the composer's post while typing (portal diff)
+      try {
+        if (root.querySelector('[data-testid="expandable-text-box"], button[aria-label="Comment"]')) return out;
+      } catch (e) {}
+      var sel = '[role="option"], [role="listitem"], li, a, button';
+      try {
+        var els = root.querySelectorAll(sel);
+        for (var i = 0; i < els.length; i++) {
+          var t = (els[i].textContent || '').trim();
+          if (t && t.length < 120 && !els[i].querySelector(sel)) out.push(els[i]);
+        }
+      } catch (e) {}
+      if (out.length === 0) {
+        try {
+          var leaves = root.querySelectorAll('div, span');
+          for (var d = 0; d < leaves.length; d++) {
+            var el = leaves[d];
+            if (el.children.length > 2) continue;
+            var dt = (el.textContent || '').trim();
+            if (!dt || dt.length > 80) continue;
+            out.push(el);
+          }
+          // keep only the deepest candidates (drop any containing another)
+          for (var x = out.length - 1; x >= 0; x--) {
+            for (var y = out.length - 1; y >= 0; y--) {
+              if (x !== y && out[x].contains(out[y])) { out.splice(x, 1); break; }
+            }
+          }
+        } catch (e) {}
+      }
+      return out;
+    },
+
+    verifyMentionInserted: function (field, pageName, beforeChips, callback) {
+      // Poll briefly: did the raw "@pageName" text become a real mention chip?
+      // Success = a new chip naming the page, or the literal "@pageName" text
+      // vanishing (TipTap replaces the query with a chip node). Failure keeps
+      // the plain text — logged honestly, no aggressive retries.
+      var self = this;
+      var pnLower = (pageName || '').toLowerCase();
+      var literal = '@' + pnLower;
+      var attempts = 0;
+      var maxAttempts = 8;
+
+      function poll() {
+        if (self.state !== 'running') { if (callback) callback(false); return; }
+        var after = self.countMentionChips(field);
+        if (after.count > (beforeChips ? beforeChips.count : 0) && after.texts.indexOf(pnLower) !== -1) {
+          console.log('[SAIC-Mention] Verified: real mention chip inserted for "' + pageName + '"');
+          if (callback) callback(true);
+          return;
+        }
+        var text = ((field && field.textContent) || '').toLowerCase();
+        if (literal && text.indexOf(literal) === -1 && text.trim().length > 0) {
+          console.log('[SAIC-Mention] Verified: raw "@' + pageName + '" text was replaced by the mention node');
+          if (callback) callback(true);
+          return;
+        }
+        attempts++;
+        if (attempts >= maxAttempts) {
+          console.log('[SAIC-Mention] Honest result: "@' + pageName + '" stayed plain text (dropdown did not complete) — continuing');
+          if (callback) callback(false);
+          return;
+        }
+        bgTimeout(poll, 250);
+      }
+      bgTimeout(poll, 300);
     },
 
     cleanupFailedMention: function (field, pageName, callback) {
@@ -3833,23 +4116,54 @@
           if (btn) console.log('[SAIC-Auto] X submit found globally');
         }
       } else {
-        // Non-X platforms: use original logic
-        var container = replyField.closest('[role="dialog"]') || replyField.closest('form') || replyField.closest('.Comment, .thing, [data-testid="post-container"]') || postEl;
+        // Non-X platforms: dialog → form → (LinkedIn 2026's inline composer
+        // opens inside the post's [role="listitem"]) → legacy containers → post
+        var container = replyField.closest('[role="dialog"]') || replyField.closest('form')
+          || (platformName === 'linkedin' ? replyField.closest('[role="listitem"]') : null)
+          || replyField.closest('.Comment, .thing, [data-testid="post-container"]')
+          || postEl;
         btn = container.querySelector(selector);
         if (!btn) btn = postEl.querySelector(selector);
       }
 
-      // Text-based fallback for all platforms
+      // Text/aria fallback for all platforms. LinkedIn 2026's submit is a
+      // text-only "Comment" button with an EMPTY aria-label that only appears
+      // once text is typed; the comment toggle it came from carries
+      // aria "Comment" plus a numeric count — exclude both.
+      var isToggleNotSubmit = function (candidate) {
+        if (self._lastCommentBtn && candidate === self._lastCommentBtn) return true;
+        if (/^\d+$/.test((candidate.textContent || '').trim())) return true; // count button
+        return false;
+      };
       if (!btn) {
         var searchRoot = platformName === 'x'
           ? (replyField.closest('[role="dialog"]') || replyField.parentElement || postEl.parentElement || document)
-          : (replyField.closest('[role="dialog"]') || replyField.closest('form') || postEl);
-        if (searchRoot) {
-          var allBtns = searchRoot.querySelectorAll('button');
+          : (replyField.closest('[role="dialog"]') || replyField.closest('form')
+             || (platformName === 'linkedin' ? replyField.closest('[role="listitem"]') : null) || postEl);
+        // Search the composer's own wrapper first so nested comment "Reply"
+        // buttons elsewhere in the post cannot win over the real submit
+        var textScopes = [];
+        if (replyField.parentElement && replyField.parentElement !== searchRoot) textScopes.push(replyField.parentElement);
+        if (searchRoot) textScopes.push(searchRoot);
+        for (var sc = 0; sc < textScopes.length && !btn; sc++) {
+          var allBtns = textScopes[sc].querySelectorAll('button');
           for (var i = 0; i < allBtns.length; i++) {
+            if (isToggleNotSubmit(allBtns[i])) continue;
             var txt = (allBtns[i].textContent || '').toLowerCase().trim();
             if (txt === 'post' || txt === 'reply' || txt === 'comment' || txt === 'submit' || txt === 'send') {
               if (self.isElVisible(allBtns[i])) { btn = allBtns[i]; break; }
+            }
+          }
+          // Icon-only fallback: submit named only by aria-label (future-proof)
+          if (!btn) {
+            for (var ai = 0; ai < allBtns.length; ai++) {
+              if (isToggleNotSubmit(allBtns[ai])) continue;
+              var al = allBtns[ai].getAttribute('aria-label') || '';
+              if (/^(post|comment|reply|submit|send)\b/i.test(al) && self.isElVisible(allBtns[ai])) {
+                btn = allBtns[ai];
+                console.log('[SAIC-Auto] Submit found via aria-label fallback:', al);
+                break;
+              }
             }
           }
         }
@@ -3861,6 +4175,7 @@
           var bestDist2 = Infinity;
           for (var gi = 0; gi < globalBtns.length; gi++) {
             var gb = globalBtns[gi];
+            if (isToggleNotSubmit(gb)) continue;
             var gtxt = (gb.textContent || '').toLowerCase().trim();
             if (gtxt === 'post' || gtxt === 'reply' || gtxt === 'comment' || gtxt === 'submit' || gtxt === 'send') {
               if (!self.isElVisible(gb)) continue;
@@ -3976,46 +4291,199 @@
       trySubmit();
     },
 
+    // ── Scroll-root controller ──
+    // Resolves which element actually scrolls the feed (window vs inner
+    // overflow container — see findScrollRootCandidates). Candidates are
+    // cached per SPA route and re-validated before each use; the controller
+    // can advance to the next candidate when one turns out not to move.
+    getScrollAnchor: function () {
+      if (platformConfig && platformConfig.postSelector) {
+        try { var post = document.querySelector(platformConfig.postSelector); if (post) return post; } catch (e) {}
+      }
+      if (platformConfig && platformConfig.feedRootSelector) {
+        var sels = platformConfig.feedRootSelector.split(',');
+        for (var i = 0; i < sels.length; i++) {
+          try { var el = document.querySelector(sels[i].trim()); if (el) return el; } catch (e) {}
+        }
+      }
+      return document.body;
+    },
+
+    getScrollController: function () {
+      var self = this;
+      var url = location.pathname + location.search;
+      var fresh = !this._scrollCtrl || this._scrollCtrl.url !== url || (Date.now() - this._scrollCtrl.ts) > 60000;
+      if (!fresh) {
+        // Re-validate cached candidates: drop detached / no-longer-scrollable
+        // elements. The window pseudo-candidate ({el: null}) always stays.
+        var keep = [];
+        var cands = this._scrollCtrl.candidates;
+        for (var i = 0; i < cands.length; i++) {
+          if (!cands[i].el || (cands[i].el.isConnected && cands[i].el.scrollHeight > cands[i].el.clientHeight + 8)) keep.push(cands[i]);
+        }
+        this._scrollCtrl.candidates = keep;
+        if (this._scrollCtrl.idx >= keep.length) this._scrollCtrl.idx = Math.max(0, keep.length - 1);
+        if (keep.length === 0) fresh = true;
+      }
+      if (fresh) {
+        var els = findScrollRootCandidates(this.getScrollAnchor());
+        this._scrollCtrl = { url: url, ts: Date.now(), idx: 0, candidates: [] };
+        for (var j = 0; j < els.length; j++) {
+          // The document root is scrolled via window.scrollTo, not scrollTop
+          var isWindow = (els[j] === document.documentElement || els[j] === document.body);
+          this._scrollCtrl.candidates.push(isWindow ? { el: null } : { el: els[j] });
+        }
+        if (this._scrollCtrl.candidates.length === 0) this._scrollCtrl.candidates.push({ el: null });
+      }
+      var ctrl = this._scrollCtrl;
+      return {
+        // element that scrolls, or null when the window is the scroller
+        current: function () { var c = ctrl.candidates[ctrl.idx]; return (c && c.el) ? c.el : null; },
+        currentY: function () {
+          var c = ctrl.candidates[ctrl.idx];
+          if (c && c.el) return c.el.scrollTop;
+          return window.scrollY || (document.scrollingElement ? document.scrollingElement.scrollTop : 0);
+        },
+        scrollTo: function (y) {
+          var c = ctrl.candidates[ctrl.idx];
+          if (c && c.el) { c.el.scrollTop = y; } else { window.scrollTo(0, y); }
+        },
+        // advance to the next candidate (window is always last); false when none remain
+        advance: function () {
+          if (ctrl.idx < ctrl.candidates.length - 1) { ctrl.idx++; return true; }
+          return false;
+        },
+        reset: function () { ctrl.idx = 0; }
+      };
+    },
+
+    currentScrollY: function () {
+      return this.getScrollController().currentY();
+    },
+
     humanScroll: function (targetY, callback) {
       var self = this;
-      var startY = window.scrollY;
-      var distance = targetY - startY;
-      if (Math.abs(distance) < 10) { if (callback) callback(); return; }
-      // In background tabs, skip animation — jump instantly
-      if (document.hidden) {
-        window.scrollTo(0, targetY);
-        bgTimeout(function () { if (callback) callback(); }, 200);
+      var ctrl = self.getScrollController();
+      var startY = ctrl.currentY();
+      var delta = targetY - startY; // preserved intent if the root changes mid-probe
+      if (Math.abs(delta) < 10) { if (callback) callback(); return; }
+
+      // End-of-feed check: scrolling DOWN while already at the root's maximum
+      // can never move, whatever we do — a lazy-load feed that has stopped
+      // delivering posts looks exactly like this. Count it as a bottom-reached
+      // stall with an honest reason instead of probing dead roots 3 times.
+      var rootEl = ctrl.current();
+      var maxScroll = rootEl ? (rootEl.scrollHeight - rootEl.clientHeight)
+        : ((document.scrollingElement || document.documentElement).scrollHeight - window.innerHeight);
+      if (delta > 0 && (maxScroll - startY) < 4) {
+        self._stuckScrolls++;
+        console.log('[SAIC-Auto] Already at the bottom of the feed (stuck ' + self._stuckScrolls + '/3)');
+        if (self._stuckScrolls >= 3) {
+          self.stop('reached the end of the feed — no new posts loading, stopping');
+        }
+        if (callback) callback();
         return;
       }
-      var totalDuration = Math.max(500, Math.min(3000, Math.abs(distance) / (300 + Math.random() * 300) * 1000));
-      var startTime = performance.now(), lastPauseAt = 0;
-      function step() {
-        if (self._abortScroll || self.state !== 'running') { if (callback) callback(); return; }
-        var now = performance.now();
-        var progress = Math.min((now - startTime) / totalDuration, 1);
-        var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-        window.scrollTo(0, startY + distance * eased);
-        if (progress - lastPauseAt > 0.15 + Math.random() * 0.2 && progress < 0.9) {
-          lastPauseAt = progress;
-          bgTimeout(step, 300 + Math.random() * 700);
+
+      function stuck() {
+        self._stuckScrolls++;
+        console.log('[SAIC-Auto] Scroll no-op (stuck ' + self._stuckScrolls + '/3)');
+        if (self._stuckScrolls >= 3) {
+          self.stop('feed did not scroll — possible layout change, stopping to avoid a stall');
+        }
+        if (callback) callback();
+      }
+
+      // Movement probe: a wrong scroll root makes scrollTo a silent no-op
+      // (that is what froze the LinkedIn engine on the 2026 feed). Nudge
+      // toward the target and measure; on failure advance to the next
+      // candidate. bgTimeout, not rAF — rAF never fires in hidden tabs.
+      function probe(cb, depth) {
+        depth = depth || 0;
+        if (depth > 6) { ctrl.reset(); cb(false); return; }
+        var before = ctrl.currentY();
+        var nudge = (delta >= 0 ? 1 : -1) * Math.max(8, Math.min(40, Math.abs(delta)));
+        ctrl.scrollTo(before + nudge);
+        bgTimeout(function () {
+          if (self.state !== 'running' || self._abortScroll) { cb(false); return; }
+          var moved = Math.abs(ctrl.currentY() - before);
+          if (moved >= 5) { cb(true); return; }
+          if (ctrl.advance()) {
+            // Re-anchor the target for the new root's coordinate space
+            startY = ctrl.currentY();
+            targetY = startY + delta;
+            if (Math.abs(delta) < 10) { cb(true); return; }
+            console.log('[SAIC-Auto] Scroll root did not move, trying next candidate');
+            probe(cb, depth + 1);
+          } else {
+            ctrl.reset();
+            cb(false);
+          }
+        }, 60);
+      }
+
+      probe(function (ok) {
+        if (self.state !== 'running' || self._abortScroll) { if (callback) callback(); return; }
+        if (!ok) { stuck(); return; }
+        self._stuckScrolls = 0;
+        // Background tabs: skip animation — jump instantly
+        if (document.hidden) {
+          var beforeJump = ctrl.currentY();
+          ctrl.scrollTo(targetY);
+          bgTimeout(function () {
+            var moved = Math.abs(ctrl.currentY() - beforeJump);
+            if (moved < Math.max(10, Math.abs(delta) * 0.1)) { stuck(); return; }
+            if (callback) callback();
+          }, 250);
           return;
         }
-        if (progress < 1) bgTimeout(step, 16);
-        else { if (callback) callback(); }
-      }
-      step();
+        var startAnimY = ctrl.currentY();
+        var distance = targetY - startAnimY;
+        if (Math.abs(distance) < 10) { if (callback) callback(); return; }
+        var totalDuration = Math.max(500, Math.min(3000, Math.abs(distance) / (300 + Math.random() * 300) * 1000));
+        var startTime = performance.now(), lastPauseAt = 0;
+        function step() {
+          if (self._abortScroll || self.state !== 'running') { if (callback) callback(); return; }
+          var now = performance.now();
+          var progress = Math.min((now - startTime) / totalDuration, 1);
+          var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+          ctrl.scrollTo(startAnimY + distance * eased);
+          if (progress - lastPauseAt > 0.15 + Math.random() * 0.2 && progress < 0.9) {
+            lastPauseAt = progress;
+            bgTimeout(step, 300 + Math.random() * 700);
+            return;
+          }
+          if (progress < 1) bgTimeout(step, 16);
+          else {
+            // Verify the animation actually moved something
+            var moved = Math.abs(ctrl.currentY() - startAnimY);
+            if (moved < Math.max(10, Math.abs(distance) * 0.1)) { stuck(); return; }
+            if (callback) callback();
+          }
+        }
+        step();
+      });
     },
 
     scrollToPost: function (postEl, callback) {
-      // Use offsetTop chain in background tabs where getBoundingClientRect returns zeros
-      var offset = 0;
-      if (document.hidden) {
-        var el = postEl;
-        while (el) { offset += el.offsetTop || 0; el = el.offsetParent; }
+      var ctrl = this.getScrollController();
+      var rootEl = ctrl.current();
+      var target = 0;
+      if (rootEl) {
+        if (document.hidden) {
+          // getBoundingClientRect returns zeros in hidden tabs — offset chains.
+          // Chains skip unpositioned overflow ancestors, so subtract the root's
+          // own chain offset to stay in its coordinate space.
+          target = rootEl.scrollTop + Math.max(0, this.getElementOffsetTop(postEl) - this.getElementOffsetTop(rootEl)) - 100;
+        } else {
+          target = rootEl.scrollTop + (postEl.getBoundingClientRect().top - rootEl.getBoundingClientRect().top) - 100;
+        }
+      } else if (document.hidden) {
+        target = this.getElementOffsetTop(postEl) - 100;
       } else {
-        offset = window.scrollY + postEl.getBoundingClientRect().top - 100;
+        target = window.scrollY + postEl.getBoundingClientRect().top - 100;
       }
-      this.humanScroll(offset - 100, callback);
+      this.humanScroll(Math.max(0, target), callback);
     },
 
     quickAddTarget: function (name, platform, type) {

@@ -2,3 +2,7 @@ node_modules/
 
 # live-test artifacts (screenshots)
 test/*.png
+
+# live-test run artifacts (reports, logs, settings backups)
+test/*.log
+test/live-*.json
